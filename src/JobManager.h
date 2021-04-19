@@ -29,6 +29,21 @@ public:
     {}
 };
 
+class Buffer
+{
+    VkBuffer buffer;
+    VkDeviceMemory bufferMemory;
+    VkDeviceSize size;
+
+public:
+
+    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size) :
+        buffer(buffer),
+        bufferMemory(bufferMemory),
+        size(size)
+    {}
+};
+
 class JobManager
 {
 private:
@@ -54,6 +69,9 @@ private:
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
     std::vector<VkPipelineLayout> pipelineLayouts;
     std::vector<VkPipeline> pipelines;
+
+    std::vector<VkBuffer> buffers;
+    std::vector<VkDeviceMemory> allocatedMemory;
 
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"
@@ -88,6 +106,18 @@ public:
         return { pipeline, pipelineLayout };
     }
 
+    Buffer createBuffer(size_t size)
+    {
+        VkBuffer buffer;
+        VkDeviceMemory bufferMemory;
+        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+
+        buffers.push_back(buffer);
+        allocatedMemory.push_back(bufferMemory);
+
+        return { buffer, bufferMemory, size};
+    }
+
 private:
 
     void initVulkan()
@@ -100,6 +130,12 @@ private:
 
     void cleanupVulkan()
     {
+        for (auto buffer: buffers)
+            vkDestroyBuffer(device, buffer, nullptr);
+        
+        for (auto memory: allocatedMemory)
+            vkFreeMemory(device, memory, nullptr);
+
         for (auto pipeline: pipelines)
             vkDestroyPipeline(device, pipeline, nullptr);
         
@@ -402,6 +438,52 @@ private:
         vkDestroyShaderModule(device, shaderModule, nullptr);
 
         return pipeline;
+    }
+
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
+        VkDeviceMemory& bufferMemory)
+    {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create buffer!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate buffer memory!");
+        }
+
+        vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+    {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
