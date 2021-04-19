@@ -1,8 +1,12 @@
+#ifndef JOB_MANAGER_H
+#define JOB_MANAGER_H
+
 #include <vulkan/vulkan.h>
 
 #include <stdexcept>
 #include <vector>
 #include <iostream>
+#include <fstream>
 #include <optional>
 #include <set>
 
@@ -11,6 +15,19 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+class Task
+{
+    VkPipeline pipeline;
+    VkPipelineLayout pipelineLayout;
+
+public:
+
+    Task(VkPipeline pipeline, VkPipelineLayout pipelineLayout) :
+        pipeline(pipeline),
+        pipelineLayout(pipelineLayout)
+    {}
+};
 
 class JobManager
 {
@@ -34,6 +51,10 @@ private:
     VkQueue computeQueue;
     VkCommandPool commandPool;
 
+    std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
+    std::vector<VkPipelineLayout> pipelineLayouts;
+    std::vector<VkPipeline> pipelines;
+
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"
     };
@@ -54,6 +75,19 @@ public:
         cleanupVulkan();
     }
 
+    Task createTask(const std::string &shaderPath)
+    {
+        auto descriptorSetLayout = createDescriptorSetLayout();
+        auto pipelineLayout = createPipelineLayout(descriptorSetLayout);
+        auto pipeline = createComputePipeline(shaderPath, pipelineLayout);
+        
+        std::copy(descriptorSetLayout.begin(), descriptorSetLayout.end(), std::back_inserter(descriptorSetLayouts));
+        pipelineLayouts.push_back(pipelineLayout);
+        pipelines.push_back(pipeline);
+
+        return { pipeline, pipelineLayout };
+    }
+
 private:
 
     void initVulkan()
@@ -66,6 +100,15 @@ private:
 
     void cleanupVulkan()
     {
+        for (auto pipeline: pipelines)
+            vkDestroyPipeline(device, pipeline, nullptr);
+        
+        for (auto pipelineLayout: pipelineLayouts)
+            vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+        for (auto descriptorSetLayout: descriptorSetLayouts)
+            vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers)
@@ -289,6 +332,78 @@ private:
         return requiredExtensions.empty();
     }
 
+    std::vector<VkDescriptorSetLayout> createDescriptorSetLayout()
+    {
+        // TODO
+        VkDescriptorSetLayoutBinding layoutBinding;
+        layoutBinding.binding = 0;
+        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ;
+        layoutBinding.descriptorCount = 1;
+        layoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        std::vector<VkDescriptorSetLayoutBinding> bindings = { layoutBinding };
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
+        VkDescriptorSetLayout descriptorSetLayout;
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+
+        return { descriptorSetLayout };
+    }
+
+    VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts)
+    {
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = descriptorSetLayouts.size();
+        pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
+        // pipelineLayoutInfo.pushConstantRangeCount;
+        // pipelineLayoutInfo.pPushConstantRanges;
+
+        VkPipelineLayout pipelineLayout;
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create pipeline layout!");
+        }
+
+        return pipelineLayout;
+    }
+
+    VkPipeline createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout)
+    {
+        auto shaderCode = readFile(shaderPath, true);
+        VkShaderModule shaderModule = createShaderModule(shaderCode);
+
+        VkPipelineShaderStageCreateInfo shaderStage = {};
+        shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shaderStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        shaderStage.module = shaderModule;
+        shaderStage.pName = "main";
+        // TODO specialization constants
+        //shaderStage.pSpecializationInfo;
+
+        VkComputePipelineCreateInfo computePipelineCreateInfo{};
+        computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        // computePipelineCreateInfo.flags;
+        computePipelineCreateInfo.stage = shaderStage;
+        computePipelineCreateInfo.layout = pipelineLayout;
+
+        VkPipeline pipeline;
+        if (vkCreateComputePipelines(device, nullptr, 1, &computePipelineCreateInfo, nullptr, &pipeline) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create compute pipeline!");
+        }
+
+        vkDestroyShaderModule(device, shaderModule, nullptr);
+
+        return pipeline;
+    }
+
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
     {
         // TODO dedicated transfer queue?
@@ -317,6 +432,22 @@ private:
         }
 
         return indices;
+    }
+
+    VkShaderModule createShaderModule(const std::vector<char>& code)
+    {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create shader module!");
+        }
+
+        return shaderModule;
     }
 
     static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
@@ -350,4 +481,30 @@ private:
 
         return VK_FALSE;
     }
+
+    static std::vector<char> readFile(const std::string &filename, bool binaryMode = false)
+    {
+        std::ios::openmode openmode = std::ios::in;
+        if (binaryMode)
+        {
+            openmode |= std::ios::binary;
+        }
+
+        std::ifstream ifs(filename, openmode);
+        if (!ifs.is_open())
+        {
+            throw std::runtime_error("Failed to open file " + filename);
+        }
+
+        ifs.ignore(std::numeric_limits<std::streamsize>::max());
+        std::vector<char> data(ifs.gcount());
+        ifs.clear();
+        ifs.seekg(0, std::ios_base::beg);
+        ifs.read(data.data(), data.size());
+        ifs.close();
+
+        return data;
+    }
 };
+
+#endif // JOB_MANAGER_H
