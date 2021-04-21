@@ -3,8 +3,11 @@
 
 #include <vulkan/vulkan.h>
 
+#include "Job.h"
+
 #include <stdexcept>
 #include <vector>
+#include <array>
 #include <iostream>
 #include <fstream>
 #include <optional>
@@ -15,6 +18,7 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
 
 class Task
 {
@@ -27,22 +31,75 @@ public:
         pipeline(pipeline),
         pipelineLayout(pipelineLayout)
     {}
+
+    VkPipeline getPipeline() const
+    {
+        return pipeline;
+    }
+
+    VkPipelineLayout getPipelineLayout() const
+    {
+        return pipelineLayout;
+    }
 };
+
 
 class Buffer
 {
+public:
+    enum class Type {
+        Local,
+        Staging
+    };
+
+private:
     VkBuffer buffer;
     VkDeviceMemory bufferMemory;
     VkDeviceSize size;
+    Type type;
+
+    Buffer *stagingBuffer;
+    VkDescriptorSet descriptorSet;
 
 public:
 
-    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size) :
+    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size, Type type = Type::Local, Buffer *staging = nullptr,
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE) :
         buffer(buffer),
         bufferMemory(bufferMemory),
-        size(size)
+        size(size),
+        type(type),
+        stagingBuffer(staging),
+        descriptorSet(descriptorSet)
     {}
+
+    ~Buffer()
+    {
+        if (stagingBuffer != nullptr)
+            delete stagingBuffer;
+    }
+
+    VkBuffer getBuffer() const
+    {
+        return buffer;
+    }
+
+    VkDeviceMemory getMemory() const
+    {
+        return bufferMemory;
+    }
+
+    Buffer* getStagingBuffer() const
+    {
+        return stagingBuffer;
+    }
+
+    VkDescriptorSet getDescriptorSet() const
+    {
+        return descriptorSet;
+    }
 };
+
 
 class JobManager
 {
@@ -65,6 +122,7 @@ private:
     VkDevice device;
     VkQueue computeQueue;
     VkCommandPool commandPool;
+    VkDescriptorPool descriptorPool;
 
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
     std::vector<VkPipelineLayout> pipelineLayouts;
@@ -73,6 +131,8 @@ private:
     std::vector<VkBuffer> buffers;
     std::vector<VkDeviceMemory> allocatedMemory;
 
+    std::vector<VkFence> fences;
+
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"
     };
@@ -80,6 +140,8 @@ private:
     const std::vector<const char*> deviceExtensions = {
         // VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
+
+    friend class Job;
 
 public:
 
@@ -95,11 +157,11 @@ public:
 
     Task createTask(const std::string &shaderPath)
     {
-        auto descriptorSetLayout = createDescriptorSetLayout();
-        auto pipelineLayout = createPipelineLayout(descriptorSetLayout);
+        auto descriptorSetLayout = createDescriptorSetLayout({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER });
+        auto pipelineLayout = createPipelineLayout({ descriptorSetLayout });
         auto pipeline = createComputePipeline(shaderPath, pipelineLayout);
-        
-        std::copy(descriptorSetLayout.begin(), descriptorSetLayout.end(), std::back_inserter(descriptorSetLayouts));
+
+        descriptorSetLayouts.push_back(descriptorSetLayout);
         pipelineLayouts.push_back(pipelineLayout);
         pipelines.push_back(pipeline);
 
@@ -110,12 +172,41 @@ public:
     {
         VkBuffer buffer;
         VkDeviceMemory bufferMemory;
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+        
+        auto descriptorSetLayout = createDescriptorSetLayout({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER });
+        auto descriptorSet = createDescriptorSet({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER }, descriptorSetLayout, buffer);
+        descriptorSetLayouts.push_back(descriptorSetLayout);
 
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        
+        Buffer *staging = new Buffer(stagingBuffer, stagingBufferMemory, size, Buffer::Type::Staging);
+        
         buffers.push_back(buffer);
         allocatedMemory.push_back(bufferMemory);
+        buffers.push_back(stagingBuffer);
+        allocatedMemory.push_back(stagingBufferMemory);
 
-        return { buffer, bufferMemory, size};
+        return { buffer, bufferMemory, size, Buffer::Type::Local, staging, descriptorSet };
+    }
+
+    Job createJob()
+    {
+        auto fence = createFence();
+        auto commandBuffer = createCommandBuffer();
+
+        fences.push_back(fence);
+
+        return { this, computeQueue, commandBuffer, fence };
+    }
+
+    virtual VkDevice getDevice()
+    {
+        return device;
     }
 
 private:
@@ -126,10 +217,15 @@ private:
         setupDebugMessenger();
         pickPhysicalDevice();
         createLogicalDevice();
+        createCommandPool();
+        createDescriptorPool();
     }
 
     void cleanupVulkan()
     {
+        for (auto fence: fences)
+            vkDestroyFence(device, fence, nullptr);
+
         for (auto buffer: buffers)
             vkDestroyBuffer(device, buffer, nullptr);
         
@@ -144,7 +240,9 @@ private:
 
         for (auto descriptorSetLayout: descriptorSetLayouts)
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
+        
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+        vkDestroyCommandPool(device, commandPool, nullptr);
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers)
@@ -368,16 +466,22 @@ private:
         return requiredExtensions.empty();
     }
 
-    std::vector<VkDescriptorSetLayout> createDescriptorSetLayout()
+    VkDescriptorSetLayout createDescriptorSetLayout(std::vector<VkDescriptorType> types)
     {
         // TODO
-        VkDescriptorSetLayoutBinding layoutBinding;
-        layoutBinding.binding = 0;
-        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ;
-        layoutBinding.descriptorCount = 1;
-        layoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        std::vector<VkDescriptorSetLayoutBinding> bindings;
 
-        std::vector<VkDescriptorSetLayoutBinding> bindings = { layoutBinding };
+        for (size_t i = 0; i < types.size(); ++i)
+        {
+            VkDescriptorSetLayoutBinding layoutBinding;
+            layoutBinding.binding = static_cast<uint32_t>(i);
+            layoutBinding.descriptorType = types[i];
+            layoutBinding.descriptorCount = 1;
+            layoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+            bindings.push_back(layoutBinding);
+        }
+
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -389,7 +493,7 @@ private:
             throw std::runtime_error("failed to create descriptor set layout!");
         }
 
-        return { descriptorSetLayout };
+        return descriptorSetLayout;
     }
 
     VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts)
@@ -484,6 +588,113 @@ private:
         }
 
         throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    void createCommandPool()
+    {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        // poolInfo.flags; // TODO
+        poolInfo.queueFamilyIndex = queueFamilyIndices.computeFamily.value();
+
+        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create graphics command pool!");
+        }
+    }
+
+    void createDescriptorPool()
+    {
+        std::array<VkDescriptorPoolSize, 1> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[0].descriptorCount = 128;
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
+        poolInfo.maxSets = 128;
+
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create descriptor pool!");
+        }
+    }
+
+    VkDescriptorSet createDescriptorSet(std::vector<VkDescriptorType> types, VkDescriptorSetLayout descriptorSetLayout, VkBuffer buffer)
+    {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &descriptorSetLayout;
+
+        VkDescriptorSet descriptorSet;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate descriptor sets!");
+        }
+
+        std::vector<VkWriteDescriptorSet> descriptorWrites{};
+
+        for (size_t i = 0; i < types.size(); ++i)
+        {
+            if (types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+            {
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = buffer;
+                bufferInfo.offset = 0;
+                bufferInfo.range = VK_WHOLE_SIZE;
+
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = descriptorSet;
+                write.dstBinding = i;
+                write.dstArrayElement = 0;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                write.descriptorCount = 1;
+                write.pBufferInfo = &bufferInfo;
+                
+                descriptorWrites.push_back(write);
+            }
+        }
+
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        return descriptorSet;
+    }
+
+    VkCommandBuffer createCommandBuffer()
+    {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+
+        VkCommandBuffer commandBuffer;
+        if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to allocate command buffer!");
+        }
+
+        return commandBuffer;
+    }
+
+    VkFence createFence()
+    {
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        VkFence fence;
+        if (vkCreateFence(device, &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create fence!");
+        }
+
+        return fence;
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
