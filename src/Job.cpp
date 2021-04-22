@@ -1,6 +1,7 @@
 #include "Job.h"
 
 #include "JobManager.h"
+#include "Resources.h"
 
 Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkFence fence) :
     manager(manager),
@@ -18,16 +19,25 @@ Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffe
     }
 }
 
-void Job::addTask(const Task &task, const Buffer &buffer, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
+void Job::addTask(const Task &task, const std::vector<std::pair<size_t, std::vector<Resource *>>> &resources,
+    uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
-    auto descriptorSet = buffer.getDescriptorSet();
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipelineLayout(), 0, 1,
-        &descriptorSet, 0, nullptr);
+
+    for (size_t i = 0; i < resources.size(); ++i)
+    {
+        auto layout = task.getDescriptorSetLayout(resources.at(i).first);
+        auto descriptorSet = manager->createDescriptorSet(
+            resourceToDescriptorType(resources.at(i).second), resources.at(i).second, layout);
+        
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipelineLayout(), 0, 1,
+            &descriptorSet, 0, nullptr);
+    }
+
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
 }
 
-void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillDone)
+void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone)
 {    
     void* stagingData;
     vkMapMemory(manager->device, buffer.getStagingBuffer()->getMemory(), 0, size, 0, &stagingData);
@@ -38,7 +48,7 @@ void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bo
     copyRegion.size = size;
     vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
 
-    if (waitTillDone)
+    if (waitTillTransferDone)
     {
         VkMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;

@@ -7,6 +7,7 @@
 class JobManager;
 class Task;
 class Buffer;
+class Resource;
 
 class Job
 {
@@ -31,8 +32,9 @@ public:
 
     Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkFence fence);
     
-    void addTask(const Task &, const Buffer &buffer, uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
-    void syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillDone = true);
+    void addTask(const Task &, const std::vector<std::pair<size_t, std::vector<Resource *>>> &resources,
+        uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
+    void syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone = true);
     void syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool waitTillShaderDone = true);
     void submit();
     bool await(uint64_t timeout = UINT64_MAX);

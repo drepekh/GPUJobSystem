@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include "Job.h"
+#include "Resources.h"
 
 #include <stdexcept>
 #include <vector>
@@ -18,87 +19,6 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
-
-
-class Task
-{
-    VkPipeline pipeline;
-    VkPipelineLayout pipelineLayout;
-
-public:
-
-    Task(VkPipeline pipeline, VkPipelineLayout pipelineLayout) :
-        pipeline(pipeline),
-        pipelineLayout(pipelineLayout)
-    {}
-
-    VkPipeline getPipeline() const
-    {
-        return pipeline;
-    }
-
-    VkPipelineLayout getPipelineLayout() const
-    {
-        return pipelineLayout;
-    }
-};
-
-
-class Buffer
-{
-public:
-    enum class Type {
-        Local,
-        Staging
-    };
-
-private:
-    VkBuffer buffer;
-    VkDeviceMemory bufferMemory;
-    VkDeviceSize size;
-    Type type;
-
-    Buffer *stagingBuffer;
-    VkDescriptorSet descriptorSet;
-
-public:
-
-    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size, Type type = Type::Local, Buffer *staging = nullptr,
-        VkDescriptorSet descriptorSet = VK_NULL_HANDLE) :
-        buffer(buffer),
-        bufferMemory(bufferMemory),
-        size(size),
-        type(type),
-        stagingBuffer(staging),
-        descriptorSet(descriptorSet)
-    {}
-
-    ~Buffer()
-    {
-        if (stagingBuffer != nullptr)
-            delete stagingBuffer;
-    }
-
-    VkBuffer getBuffer() const
-    {
-        return buffer;
-    }
-
-    VkDeviceMemory getMemory() const
-    {
-        return bufferMemory;
-    }
-
-    Buffer* getStagingBuffer() const
-    {
-        return stagingBuffer;
-    }
-
-    VkDescriptorSet getDescriptorSet() const
-    {
-        return descriptorSet;
-    }
-};
 
 
 class JobManager
@@ -142,6 +62,7 @@ private:
     };
 
     friend class Job;
+    friend class IncompleteTask;
 
 public:
 
@@ -155,17 +76,21 @@ public:
         cleanupVulkan();
     }
 
-    Task createTask(const std::string &shaderPath)
+    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout)
     {
-        auto descriptorSetLayout = createDescriptorSetLayout({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER });
-        auto pipelineLayout = createPipelineLayout({ descriptorSetLayout });
+        std::vector<VkDescriptorSetLayout> layouts;
+        for (const auto &descriptorSetLayoutTypes: layout)
+        {
+            layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
+        }
+        auto pipelineLayout = createPipelineLayout(layouts);
         auto pipeline = createComputePipeline(shaderPath, pipelineLayout);
 
-        descriptorSetLayouts.push_back(descriptorSetLayout);
+        std::copy(layouts.begin(), layouts.end(), std::back_inserter(descriptorSetLayouts));
         pipelineLayouts.push_back(pipelineLayout);
         pipelines.push_back(pipeline);
 
-        return { pipeline, pipelineLayout };
+        return { pipeline, pipelineLayout, layouts };
     }
 
     Buffer createBuffer(size_t size)
@@ -174,10 +99,6 @@ public:
         VkDeviceMemory bufferMemory;
         createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
-        
-        auto descriptorSetLayout = createDescriptorSetLayout({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER });
-        auto descriptorSet = createDescriptorSet({ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER }, descriptorSetLayout, buffer);
-        descriptorSetLayouts.push_back(descriptorSetLayout);
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -191,7 +112,7 @@ public:
         buffers.push_back(stagingBuffer);
         allocatedMemory.push_back(stagingBufferMemory);
 
-        return { buffer, bufferMemory, size, Buffer::Type::Local, staging, descriptorSet };
+        return { buffer, bufferMemory, size, Buffer::Type::Local, staging };
     }
 
     Job createJob()
@@ -496,6 +417,15 @@ private:
         return descriptorSetLayout;
     }
 
+    VkDescriptorSetLayout createDescriptorSetLayout(std::vector<ResourceType> types)
+    {
+        std::vector<VkDescriptorType> descriptorTypes;
+        for (auto type: types)
+            descriptorTypes.push_back(resourceToDescriptorType(type));
+        
+        return createDescriptorSetLayout(descriptorTypes);
+    }
+
     VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts)
     {
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -623,7 +553,8 @@ private:
         }
     }
 
-    VkDescriptorSet createDescriptorSet(std::vector<VkDescriptorType> types, VkDescriptorSetLayout descriptorSetLayout, VkBuffer buffer)
+    VkDescriptorSet createDescriptorSet(std::vector<VkDescriptorType> types, const std::vector<Resource *> &resources,
+        VkDescriptorSetLayout descriptorSetLayout)
     {
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -644,7 +575,7 @@ private:
             if (types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
             {
                 VkDescriptorBufferInfo bufferInfo{};
-                bufferInfo.buffer = buffer;
+                bufferInfo.buffer = static_cast<Buffer*>(resources[i])->getBuffer();
                 bufferInfo.offset = 0;
                 bufferInfo.range = VK_WHOLE_SIZE;
 
