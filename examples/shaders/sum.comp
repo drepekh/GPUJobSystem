@@ -1,0 +1,23 @@
+#version 450
+
+layout(set = 0, binding = 0) buffer Pos1 {
+   uint values[ ];
+} buffer1;
+
+layout(set = 0, binding = 1) buffer Pos2 {
+   uint values[ ];
+} buffer2;
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+
+uint add(uint a, uint b)
+{
+    return a + b;
+}
+
+void main() 
+{
+    uint index = gl_GlobalInvocationID.x;
+    buffer2.values[index] = add(buffer1.values[index], buffer2.values[index]);
+}
