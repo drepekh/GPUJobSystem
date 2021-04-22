@@ -13,6 +13,7 @@
 #include <fstream>
 #include <optional>
 #include <set>
+#include <functional>
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -113,6 +114,16 @@ public:
         allocatedMemory.push_back(stagingBufferMemory);
 
         return { buffer, bufferMemory, size, Buffer::Type::Local, staging };
+    }
+
+    ResourceSet createResourceSet(const std::vector<Resource *> &resources)
+    {
+        VkDescriptorSetLayout layout = createDescriptorSetLayout(resourceToDescriptorType(resources));
+        VkDescriptorSet descriptorSet = createDescriptorSet(resourceToDescriptorType(resources), resources, layout);
+
+        descriptorSetLayouts.push_back(layout);
+
+        return { descriptorSet };
     }
 
     Job createJob()
@@ -569,15 +580,19 @@ private:
         }
 
         std::vector<VkWriteDescriptorSet> descriptorWrites{};
+        std::vector<std::function<void()>> deleters;
 
         for (size_t i = 0; i < types.size(); ++i)
         {
             if (types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
             {
-                VkDescriptorBufferInfo bufferInfo{};
-                bufferInfo.buffer = static_cast<Buffer*>(resources[i])->getBuffer();
-                bufferInfo.offset = 0;
-                bufferInfo.range = VK_WHOLE_SIZE;
+                VkDescriptorBufferInfo *bufferInfo = new VkDescriptorBufferInfo{};
+                bufferInfo->buffer = static_cast<Buffer*>(resources[i])->getBuffer();
+                bufferInfo->offset = 0;
+                bufferInfo->range = VK_WHOLE_SIZE;
+                deleters.push_back([bufferInfo](){
+                    delete bufferInfo;
+                });
 
                 VkWriteDescriptorSet write{};
                 write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -586,13 +601,17 @@ private:
                 write.dstArrayElement = 0;
                 write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 write.descriptorCount = 1;
-                write.pBufferInfo = &bufferInfo;
+                write.pBufferInfo = bufferInfo;
                 
                 descriptorWrites.push_back(write);
             }
         }
 
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+
+        for (auto &del: deleters)
+            del();
+
         return descriptorSet;
     }
 

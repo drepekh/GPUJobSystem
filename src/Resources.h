@@ -71,6 +71,22 @@ static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<
 }
 
 
+class ResourceSet
+{
+    VkDescriptorSet descriptorSet;
+
+public:
+    ResourceSet(VkDescriptorSet descriptorSet) :
+        descriptorSet(descriptorSet)
+    {}
+
+    VkDescriptorSet getDescriptorSet() const
+    {
+        return descriptorSet;
+    }
+};
+
+
 class Buffer : public Resource
 {
 public:

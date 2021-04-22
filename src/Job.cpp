@@ -30,6 +30,27 @@ void Job::addTask(const Task &task, const std::vector<std::pair<size_t, std::vec
         auto descriptorSet = manager->createDescriptorSet(
             resourceToDescriptorType(resources.at(i).second), resources.at(i).second, layout);
         
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            task.getPipelineLayout(),
+            static_cast<uint32_t>(resources.at(i).first),
+            1,
+            &descriptorSet,
+            0, nullptr);
+    }
+
+    vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+}
+
+void Job::addTask(const Task &task, const std::vector<std::pair<size_t, ResourceSet>> &resources,
+    uint32_t groupX, uint32_t groupY, uint32_t groupZ)
+{
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
+
+    for (size_t i = 0; i < resources.size(); ++i)
+    {
+        auto descriptorSet = resources[i].second.getDescriptorSet();
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipelineLayout(), 0, 1,
             &descriptorSet, 0, nullptr);
     }
@@ -95,6 +116,23 @@ void Job::syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool
     vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
 
     transfers.push({ &buffer, size, data });
+}
+
+void Job::waitForTasksFinish()
+{
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        1, &barrier,
+        0, nullptr,
+        0, nullptr);
 }
 
 void Job::submit()
