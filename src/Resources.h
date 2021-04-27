@@ -73,13 +73,17 @@ static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<
 
 class ResourceSet
 {
+    friend JobManager;
+
     VkDescriptorSet descriptorSet;
 
-public:
     ResourceSet(VkDescriptorSet descriptorSet) :
         descriptorSet(descriptorSet)
     {}
 
+    ResourceSet(size_t) = delete;
+
+public:
     VkDescriptorSet getDescriptorSet() const
     {
         return descriptorSet;
