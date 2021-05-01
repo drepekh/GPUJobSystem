@@ -44,6 +44,7 @@ private:
     VkQueue computeQueue;
     VkCommandPool commandPool;
     VkDescriptorPool descriptorPool;
+    bool manageInstance;
 
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
     std::vector<VkPipelineLayout> pipelineLayouts;
@@ -63,11 +64,19 @@ private:
     };
 
     friend class Job;
-    friend class IncompleteTask;
 
 public:
 
-    JobManager()
+    JobManager() :
+        manageInstance(true)
+    {
+        initVulkan();
+    }
+
+    JobManager(VkPhysicalDevice physicalDevice, VkDevice device) :
+        physicalDevice(physicalDevice),
+        device(device),
+        manageInstance(false)
     {
         initVulkan();
     }
@@ -145,10 +154,13 @@ private:
 
     void initVulkan()
     {
-        createInstance();
-        setupDebugMessenger();
-        pickPhysicalDevice();
-        createLogicalDevice();
+        if (manageInstance)
+        {
+            createInstance();
+            setupDebugMessenger();
+            pickPhysicalDevice();
+            createLogicalDevice();
+        }
         createCommandPool();
         createDescriptorPool();
     }
@@ -175,13 +187,17 @@ private:
         
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         vkDestroyCommandPool(device, commandPool, nullptr);
-        vkDestroyDevice(device, nullptr);
 
-        if (enableValidationLayers)
+        if (manageInstance)
         {
-            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+            vkDestroyDevice(device, nullptr);
+
+            if (enableValidationLayers)
+            {
+                DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+            }
+            vkDestroyInstance(instance, nullptr);
         }
-        vkDestroyInstance(instance, nullptr);
     }
 
     void createInstance()
