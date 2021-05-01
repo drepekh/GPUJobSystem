@@ -33,13 +33,9 @@ public:
 
     Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkFence fence);
     
-    void addTask(const Task &task, const std::vector<std::pair<size_t, std::vector<Resource *>>> &resources,
-        uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
-    void addTask(const Task &task, const std::vector<std::vector<Resource *>> &resouces,
+    void addTask(const Task &, const std::vector<std::pair<size_t, std::vector<Resource *>>> &resources,
         uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
     void addTask(const Task &task, const std::vector<std::pair<size_t, ResourceSet>> &resources,
-        uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
-    void addTask(const Task &task, const std::vector<ResourceSet> &resources,
         uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
     void syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone = true);
     void syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool waitTillShaderDone = true);

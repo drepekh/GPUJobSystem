@@ -43,18 +43,6 @@ void Job::addTask(const Task &task, const std::vector<std::pair<size_t, std::vec
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
 }
 
-void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
-    uint32_t groupX, uint32_t groupY, uint32_t groupZ)
-{
-    std::vector<std::pair<size_t, std::vector<Resource *>>> res;
-    res.reserve(resources.size());
-    for (size_t i = 0; i < resources.size(); ++i)
-    {
-        res.push_back({ i, resources[i] });
-    }
-    return addTask(task, res, groupX, groupY, groupZ);
-}
-
 void Job::addTask(const Task &task, const std::vector<std::pair<size_t, ResourceSet>> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
@@ -63,29 +51,11 @@ void Job::addTask(const Task &task, const std::vector<std::pair<size_t, Resource
     for (size_t i = 0; i < resources.size(); ++i)
     {
         auto descriptorSet = resources[i].second.getDescriptorSet();
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            task.getPipelineLayout(),
-            static_cast<uint32_t>(resources.at(i).first),
-            1,
-            &descriptorSet,
-            0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipelineLayout(), 0, 1,
+            &descriptorSet, 0, nullptr);
     }
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
-}
-
-void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
-    uint32_t groupX, uint32_t groupY, uint32_t groupZ)
-{
-    std::vector<std::pair<size_t, ResourceSet>> res;
-    res.reserve(resources.size());
-    for (size_t i = 0; i < resources.size(); ++i)
-    {
-        res.push_back({ i, resources[i] });
-    }
-    return addTask(task, res, groupX, groupY, groupZ);
 }
 
 void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone)
