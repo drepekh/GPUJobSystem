@@ -19,43 +19,82 @@ Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffe
     }
 }
 
-void Job::addTask(const Task &task, const std::vector<std::pair<size_t, std::vector<Resource *>>> &resources,
+void Job::addTask(const Task &task, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
+{
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
+    bindPendingResources(task);
+
+    vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+}
+
+void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
+    bindPendingResources(task);
 
-    for (size_t i = 0; i < resources.size(); ++i)
+    if (resources.size() > 0)
     {
-        auto layout = task.getDescriptorSetLayout(resources.at(i).first);
-        auto descriptorSet = manager->createDescriptorSet(
-            resourceToDescriptorType(resources.at(i).second), resources.at(i).second, layout);
-        
+        std::vector<VkDescriptorSet> descriptorSets;
+        descriptorSets.reserve(resources.size());
+        for (size_t i = 0; i < resources.size(); ++i)
+        {
+            descriptorSets.push_back(manager->createDescriptorSet(
+                resourceToDescriptorType(resources.at(i)),
+                resources.at(i),
+                task.getDescriptorSetLayout(i)
+            ));
+        }
+
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
             task.getPipelineLayout(),
-            static_cast<uint32_t>(resources.at(i).first),
-            1,
-            &descriptorSet,
+            0,
+            static_cast<uint32_t>(descriptorSets.size()),
+            descriptorSets.data(),
             0, nullptr);
     }
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
 }
 
-void Job::addTask(const Task &task, const std::vector<std::pair<size_t, ResourceSet>> &resources,
+void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
+    bindPendingResources(task);
 
-    for (size_t i = 0; i < resources.size(); ++i)
+    if (resources.size() > 0)
     {
-        auto descriptorSet = resources[i].second.getDescriptorSet();
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipelineLayout(), 0, 1,
-            &descriptorSet, 0, nullptr);
+        std::vector<VkDescriptorSet> descriptorSets;
+        descriptorSets.reserve(resources.size());
+        for (size_t i = 0; i < resources.size(); ++i)
+        {
+            descriptorSets.push_back(resources[i].getDescriptorSet());
+        }
+
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            task.getPipelineLayout(),
+            0,
+            static_cast<uint32_t>(descriptorSets.size()),
+            descriptorSets.data(),
+            0, nullptr);
     }
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+}
+
+void Job::useResources(size_t index, const ResourceSet &resources)
+{
+    pendingBindings.push_back({index, resources});
+}
+
+void Job::useResources(size_t index, const std::vector<Resource *> &resources)
+{
+    pendingBindings.push_back({index, resources});
 }
 
 void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone)
@@ -194,4 +233,36 @@ void Job::completeTransfers()
     }
 
     transfersComplete = true;
+}
+
+void Job::bindPendingResources(const Task &task)
+{
+    for (const auto &resource: pendingBindings)
+    {
+        VkDescriptorSet descriptorSet;
+        if (std::holds_alternative<ResourceSet>(resource.second))
+        {
+            descriptorSet = std::get<ResourceSet>(resource.second).getDescriptorSet();
+        }
+        else
+        {
+            const auto &val = std::get<std::vector<Resource *>>(resource.second);
+            descriptorSet = manager->createDescriptorSet(
+                resourceToDescriptorType(val),
+                val,
+                task.getDescriptorSetLayout(resource.first)
+            );
+        }
+        
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            task.getPipelineLayout(),
+            static_cast<uint32_t>(resource.first),
+            1,
+            &descriptorSet,
+            0, nullptr);
+    }
+
+    pendingBindings.clear();
 }

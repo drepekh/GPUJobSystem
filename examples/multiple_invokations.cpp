@@ -25,7 +25,7 @@ int main()
     printArray("Array 2", data2);
 
     JobManager manager;
-    Task task = manager.createTask("examples/shaders/sum.spv",
+    Task task = manager.createTask("shaders/sum.spv",
         {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }});
     Buffer buffer1 = manager.createBuffer(dataSize);
     Buffer buffer2 = manager.createBuffer(dataSize);
@@ -37,11 +37,12 @@ int main()
     job.syncResourceToDevice(buffer1, data1, dataSize, false);
     job.syncResourceToDevice(buffer2, data2, dataSize);
     // execute task
-    job.addTask(task, {{0, resourceSet}}, arraySize);
+    job.addTask(task, { resourceSet }, arraySize);
     // wait until task finishes all write operations
     job.waitForTasksFinish();
     // execute task again with differently binded buffers
-    job.addTask(task, {{0, resourceSet2}}, arraySize);
+    job.useResources(0, resourceSet2);
+    job.addTask(task, arraySize);
     // copy data back to host
     job.syncResourceToHost(buffer1, data1, dataSize);
     job.syncResourceToHost(buffer2, data2, dataSize, false);

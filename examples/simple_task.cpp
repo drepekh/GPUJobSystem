@@ -22,7 +22,7 @@ int main()
 
     // record commands
     job.syncResourceToDevice(buffer, data, dataSize);
-    job.addTask(task, {{0, { &buffer }}}, arraySize);
+    job.addTask(task, {{ &buffer }}, arraySize);
     job.syncResourceToHost(buffer, data, dataSize);
     // submit and wait until done
     job.submit();
