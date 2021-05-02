@@ -8,84 +8,25 @@
 class JobManager;
 
 enum class ResourceType {
-    StorageBuffer
+    StorageBuffer,
+    StorageImage
 };
-
-
-static VkDescriptorType resourceToDescriptorType(ResourceType type)
-{
-    switch (type)
-    {
-    case ResourceType::StorageBuffer:
-        return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    }
-
-    return VK_DESCRIPTOR_TYPE_MAX_ENUM;
-}
-
-static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<ResourceType> &types)
-{
-    std::vector<VkDescriptorType> res;
-    res.reserve(types.size());
-    for (ResourceType type: types)
-        res.push_back(resourceToDescriptorType(type));
-    
-    return res;
-}
-
 
 class Resource
 {
     ResourceType resourceType;
 
-public:
+protected:
     Resource(ResourceType resourceType) :
         resourceType(resourceType)
     {}
 
+public:
     ResourceType getResourceType() const
     {
         return resourceType;
     }
 };
-
-
-static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<Resource> &resources)
-{
-    std::vector<VkDescriptorType> res;
-    res.reserve(resources.size());
-    for (const auto &resource: resources)
-        res.push_back(resourceToDescriptorType(resource.getResourceType()));
-    
-    return res;
-}
-
-static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<Resource*> &resources)
-{
-    std::vector<VkDescriptorType> res;
-    res.reserve(resources.size());
-    for (const auto &resource: resources)
-        res.push_back(resourceToDescriptorType(resource->getResourceType()));
-    
-    return res;
-}
-
-
-class ResourceSet
-{
-    VkDescriptorSet descriptorSet;
-
-public:
-    ResourceSet(VkDescriptorSet descriptorSet) :
-        descriptorSet(descriptorSet)
-    {}
-
-    VkDescriptorSet getDescriptorSet() const
-    {
-        return descriptorSet;
-    }
-};
-
 
 class Buffer : public Resource
 {
@@ -137,6 +78,67 @@ public:
 };
 
 
+class Image : public Resource
+{
+    VkImage image;
+    VkDeviceMemory imageMemory;
+    VkImageView imageView;
+    size_t width;
+    size_t height;
+    
+public:
+    Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height) :
+        Resource(ResourceType::StorageImage),
+        image(image),
+        imageMemory(imageMemory),
+        imageView(imageView),
+        width(width),
+        height(height)
+    {}
+
+    VkImage getImage() const
+    {
+        return image;
+    }
+
+    VkImageView getView() const
+    {
+        return imageView;
+    }
+
+    VkDeviceMemory getMemory() const
+    {
+        return imageMemory;
+    }
+
+    size_t getWidth() const
+    {
+        return width;
+    }
+
+    size_t getHeight() const
+    {
+        return height;
+    }
+};
+
+
+class ResourceSet
+{
+    VkDescriptorSet descriptorSet;
+
+public:
+    ResourceSet(VkDescriptorSet descriptorSet) :
+        descriptorSet(descriptorSet)
+    {}
+
+    VkDescriptorSet getDescriptorSet() const
+    {
+        return descriptorSet;
+    }
+};
+
+
 class Task
 {
     VkPipeline pipeline;
@@ -171,6 +173,50 @@ public:
         return descriptorSetLayouts.size();
     }
 };
+
+
+static VkDescriptorType resourceToDescriptorType(ResourceType type)
+{
+    switch (type)
+    {
+    case ResourceType::StorageBuffer:
+        return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    case ResourceType::StorageImage:
+        return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    }
+
+    return VK_DESCRIPTOR_TYPE_MAX_ENUM;
+}
+
+static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<ResourceType> &types)
+{
+    std::vector<VkDescriptorType> res;
+    res.reserve(types.size());
+    for (ResourceType type: types)
+        res.push_back(resourceToDescriptorType(type));
+    
+    return res;
+}
+
+static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<Resource> &resources)
+{
+    std::vector<VkDescriptorType> res;
+    res.reserve(resources.size());
+    for (const auto &resource: resources)
+        res.push_back(resourceToDescriptorType(resource.getResourceType()));
+    
+    return res;
+}
+
+static std::vector<VkDescriptorType> resourceToDescriptorType(const std::vector<Resource*> &resources)
+{
+    std::vector<VkDescriptorType> res;
+    res.reserve(resources.size());
+    for (const auto &resource: resources)
+        res.push_back(resourceToDescriptorType(resource->getResourceType()));
+    
+    return res;
+}
 
 
 #endif // RESOURCES_H

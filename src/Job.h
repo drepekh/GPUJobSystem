@@ -44,7 +44,7 @@ public:
     void useResources(size_t, const ResourceSet &);
     void useResources(size_t, const std::vector<Resource *> &);
     
-    void syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone = true);
+    void syncResourceToDevice(const Resource &resource, void *data, size_t size, bool waitTillTransferDone = true);
     void syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool waitTillShaderDone = true);
 
     void waitForTasksFinish();

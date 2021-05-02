@@ -97,16 +97,36 @@ void Job::useResources(size_t index, const std::vector<Resource *> &resources)
     pendingBindings.push_back({index, resources});
 }
 
-void Job::syncResourceToDevice(const Buffer &buffer, void *data, size_t size, bool waitTillTransferDone)
-{    
-    void* stagingData;
-    vkMapMemory(manager->device, buffer.getStagingBuffer()->getMemory(), 0, size, 0, &stagingData);
-        memcpy(stagingData, data, size);
-    vkUnmapMemory(manager->device, buffer.getStagingBuffer()->getMemory());
+void Job::syncResourceToDevice(const Resource &resource, void *data, size_t size, bool waitTillTransferDone)
+{
+    if (resource.getResourceType() == ResourceType::StorageBuffer)
+    {
+        const Buffer *buffer = static_cast<const Buffer*>(&resource);
+        manager->copyDataToHostVisibleMemory(data, size, buffer->getStagingBuffer()->getMemory());
 
-    VkBufferCopy copyRegion{};
-    copyRegion.size = size;
-    vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
+        VkBufferCopy copyRegion{};
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, buffer->getStagingBuffer()->getBuffer(), buffer->getBuffer(), 1, &copyRegion);
+    }
+    else if (resource.getResourceType() == ResourceType::StorageImage)
+    {
+        const Image *image = static_cast<const Image*>(&resource);
+        VkDeviceSize imageSize = image->getWidth() * image->getHeight() * 4;
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        manager->copyDataToHostVisibleMemory(data, size, stagingBufferMemory);
+
+        manager->transitionImageLayout(commandBuffer, image->getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        manager->copyBufferToImage(commandBuffer, stagingBuffer, image->getImage(), image->getWidth(), image->getHeight());
+        manager->transitionImageLayout(commandBuffer, image->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
+        vkDestroyBuffer(manager->device, stagingBuffer, nullptr);
+        vkFreeMemory(manager->device, stagingBufferMemory, nullptr);
+    }
 
     if (waitTillTransferDone)
     {
@@ -154,7 +174,7 @@ void Job::syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool
     copyRegion.size = size;
     vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
 
-    transfers.push({ &buffer, size, data });
+    transfers.push({ buffer.getStagingBuffer(), size, data });
 }
 
 void Job::waitForTasksFinish()
@@ -226,10 +246,7 @@ void Job::completeTransfers()
         auto transferInfo = transfers.front();
         transfers.pop();
 
-        void* stagingData;
-        vkMapMemory(manager->device, transferInfo.buffer->getStagingBuffer()->getMemory(), 0, transferInfo.size, 0, &stagingData);
-            memcpy(transferInfo.dst, stagingData, transferInfo.size);
-        vkUnmapMemory(manager->device, transferInfo.buffer->getStagingBuffer()->getMemory());
+        manager->copyDataFromHostVisibleMemory(transferInfo.dst, transferInfo.size, transferInfo.buffer->getMemory());
     }
 
     transfersComplete = true;
