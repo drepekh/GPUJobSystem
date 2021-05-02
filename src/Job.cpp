@@ -97,21 +97,21 @@ void Job::useResources(size_t index, const std::vector<Resource *> &resources)
     pendingBindings.push_back({index, resources});
 }
 
-void Job::syncResourceToDevice(const Resource &resource, void *data, size_t size, bool waitTillTransferDone)
+void Job::syncResourceToDevice(const Resource &resource, const void *data, size_t size, bool waitTillTransferDone)
 {
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
-        const Buffer *buffer = static_cast<const Buffer*>(&resource);
-        manager->copyDataToHostVisibleMemory(data, size, buffer->getStagingBuffer()->getMemory());
+        const Buffer &buffer = static_cast<const Buffer&>(resource);
+        manager->copyDataToHostVisibleMemory(data, size, buffer.getStagingBuffer()->getMemory());
 
         VkBufferCopy copyRegion{};
         copyRegion.size = size;
-        vkCmdCopyBuffer(commandBuffer, buffer->getStagingBuffer()->getBuffer(), buffer->getBuffer(), 1, &copyRegion);
+        vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
-        const Image *image = static_cast<const Image*>(&resource);
-        VkDeviceSize imageSize = image->getWidth() * image->getHeight() * 4;
+        const Image &image = static_cast<const Image&>(resource);
+        VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -120,12 +120,11 @@ void Job::syncResourceToDevice(const Resource &resource, void *data, size_t size
 
         manager->copyDataToHostVisibleMemory(data, size, stagingBufferMemory);
 
-        manager->transitionImageLayout(commandBuffer, image->getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        manager->copyBufferToImage(commandBuffer, stagingBuffer, image->getImage(), image->getWidth(), image->getHeight());
-        manager->transitionImageLayout(commandBuffer, image->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        manager->copyBufferToImage(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
+        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 
-        vkDestroyBuffer(manager->device, stagingBuffer, nullptr);
-        vkFreeMemory(manager->device, stagingBufferMemory, nullptr);
+        transfers.push({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
 
     if (waitTillTransferDone)
@@ -151,7 +150,7 @@ void Job::syncResourceToDevice(const Resource &resource, void *data, size_t size
     }
 }
 
-void Job::syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool waitTillShaderDone)
+void Job::syncResourceToHost(const Resource &resource, void *data, size_t size, bool waitTillShaderDone)
 {
     if (waitTillShaderDone)
     {
@@ -170,11 +169,34 @@ void Job::syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool
             0, nullptr);
     }
 
-    VkBufferCopy copyRegion{};
-    copyRegion.size = size;
-    vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
+    if (resource.getResourceType() == ResourceType::StorageBuffer)
+    {
+        const Buffer &buffer = static_cast<const Buffer&>(resource);
+        VkBufferCopy copyRegion{};
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
 
-    transfers.push({ buffer.getStagingBuffer(), size, data });
+        transfers.push({ buffer.getStagingBuffer(), size, data });
+    }
+    else if (resource.getResourceType() == ResourceType::StorageImage)
+    {
+        const Image &image = static_cast<const Image&>(resource);
+        VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        manager->copyImageToBuffer(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
+        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
+        Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
+        
+        transfers.push({ buffer, imageSize, data, true });
+    }
+    
 }
 
 void Job::waitForTasksFinish()
@@ -246,7 +268,15 @@ void Job::completeTransfers()
         auto transferInfo = transfers.front();
         transfers.pop();
 
-        manager->copyDataFromHostVisibleMemory(transferInfo.dst, transferInfo.size, transferInfo.buffer->getMemory());
+        if (transferInfo.dst != nullptr)
+            manager->copyDataFromHostVisibleMemory(transferInfo.dst, transferInfo.size, transferInfo.buffer->getMemory());
+
+        if (transferInfo.destroyAfterTransfer)
+        {
+            vkDestroyBuffer(manager->device, transferInfo.buffer->getBuffer(), nullptr);
+            vkFreeMemory(manager->device, transferInfo.buffer->getMemory(), nullptr);
+            delete transferInfo.buffer;
+        }
     }
 
     transfersComplete = true;

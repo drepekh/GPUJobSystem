@@ -27,6 +27,7 @@ class Job
         const Buffer *buffer;
         size_t size;
         void *dst;
+        bool destroyAfterTransfer = false;
     };
 
     std::queue<TransferInfo> transfers;
@@ -44,8 +45,8 @@ public:
     void useResources(size_t, const ResourceSet &);
     void useResources(size_t, const std::vector<Resource *> &);
     
-    void syncResourceToDevice(const Resource &resource, void *data, size_t size, bool waitTillTransferDone = true);
-    void syncResourceToHost(const Buffer &buffer, void *data, size_t size, bool waitTillShaderDone = true);
+    void syncResourceToDevice(const Resource &resource, const void *data, size_t size, bool waitTillTransferDone = true);
+    void syncResourceToHost(const Resource &resource, void *data, size_t size, bool waitTillShaderDone = true);
 
     void waitForTasksFinish();
 
