@@ -28,6 +28,7 @@ public:
     }
 };
 
+
 class Buffer : public Resource
 {
 public:
@@ -171,6 +172,27 @@ public:
     size_t getDescriptorSetLayoutsCount() const
     {
         return descriptorSetLayouts.size();
+    }
+};
+
+
+class Semaphore
+{
+    VkSemaphore semaphore;
+
+public:
+    Semaphore(VkSemaphore semaphore) :
+        semaphore(semaphore)
+    {}
+
+    VkSemaphore getSemaphore()
+    {
+        return semaphore;
+    }
+
+    bool isValid()
+    {
+        return semaphore != VK_NULL_HANDLE;
     }
 };
 

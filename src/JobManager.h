@@ -881,6 +881,20 @@ private:
         return fence;
     }
 
+    VkSemaphore createSemaphore()
+    {
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkSemaphore semaphore;
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
+        {
+            throw std::runtime_error("Failed to create semaphore");
+        }
+
+        return semaphore;
+    }
+
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
     {
         // TODO dedicated transfer queue?

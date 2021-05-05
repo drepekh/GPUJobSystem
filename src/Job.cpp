@@ -7,7 +7,8 @@ Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffe
     manager(manager),
     computeQueue(computeQueue),
     commandBuffer(commandBuffer),
-    fence(fence)
+    fence(fence),
+    signalSemaphore(VK_NULL_HANDLE)
 {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -216,7 +217,7 @@ void Job::waitForTasksFinish()
         0, nullptr);
 }
 
-void Job::submit()
+Semaphore Job::submit(bool signal)
 {
     if (!recorded)
     {
@@ -232,6 +233,17 @@ void Job::submit()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
+    if (signal)
+    {
+        if (signalSemaphore == VK_NULL_HANDLE)
+        {
+            signalSemaphore = manager->createSemaphore();
+        }
+
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &signalSemaphore;
+    }
+
     vkResetFences(manager->device, 1, &fence);
 
     if (vkQueueSubmit(computeQueue, 1, &submitInfo, fence) != VK_SUCCESS)
@@ -240,6 +252,8 @@ void Job::submit()
     }
 
     transfersComplete = false;
+
+    return { signal ? signalSemaphore : VK_NULL_HANDLE };
 }
 
 bool Job::await(uint64_t timeout)

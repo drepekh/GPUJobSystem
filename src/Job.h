@@ -10,6 +10,7 @@ class Task;
 class Buffer;
 class Resource;
 class ResourceSet;
+class Semaphore;
 
 class Job
 {
@@ -18,6 +19,7 @@ class Job
     VkQueue computeQueue;
     VkCommandBuffer commandBuffer;
     VkFence fence;
+    VkSemaphore signalSemaphore;
     bool recorded = false;
     bool transfersComplete = true;
     std::vector<std::pair<size_t, std::variant<ResourceSet, std::vector<Resource *>>>> pendingBindings;
@@ -50,7 +52,7 @@ public:
 
     void waitForTasksFinish();
 
-    void submit();
+    Semaphore submit(bool signal = false);
     bool await(uint64_t timeout = UINT64_MAX);
     bool isComplete();
 
