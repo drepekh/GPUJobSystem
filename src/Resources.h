@@ -33,8 +33,9 @@ class Buffer : public Resource
 {
 public:
     enum class Type {
-        Local,
-        Staging
+        DeviceLocal,
+        Staging,
+        Uniform
     };
 
 private:
@@ -47,7 +48,7 @@ private:
 
 public:
 
-    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size, Type type = Type::Local, Buffer *staging = nullptr) :
+    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size, Type type = Type::DeviceLocal, Buffer *staging = nullptr) :
         Resource(ResourceType::StorageBuffer),
         buffer(buffer),
         bufferMemory(bufferMemory),
@@ -75,6 +76,11 @@ public:
     Buffer* getStagingBuffer() const
     {
         return stagingBuffer;
+    }
+
+    Buffer::Type getBufferType() const
+    {
+        return bufferType;
     }
 };
 

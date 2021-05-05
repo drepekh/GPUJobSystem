@@ -103,11 +103,22 @@ void Job::syncResourceToDevice(const Resource &resource, const void *data, size_
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
         const Buffer &buffer = static_cast<const Buffer&>(resource);
-        manager->copyDataToHostVisibleMemory(data, size, buffer.getStagingBuffer()->getMemory());
+        switch(buffer.getBufferType())
+        {
+        case Buffer::Type::DeviceLocal:
+        {
+            manager->copyDataToHostVisibleMemory(data, size, buffer.getStagingBuffer()->getMemory());
 
-        VkBufferCopy copyRegion{};
-        copyRegion.size = size;
-        vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
+            VkBufferCopy copyRegion{};
+            copyRegion.size = size;
+            vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
+            break;
+        }
+        case Buffer::Type::Staging:
+        case Buffer::Type::Uniform:
+            manager->copyDataToHostVisibleMemory(data, size, buffer.getMemory());
+            break;
+        }
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
@@ -173,9 +184,12 @@ void Job::syncResourceToHost(const Resource &resource, void *data, size_t size, 
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
         const Buffer &buffer = static_cast<const Buffer&>(resource);
-        VkBufferCopy copyRegion{};
-        copyRegion.size = size;
-        vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
+        if (buffer.getBufferType() == Buffer::Type::DeviceLocal)
+        {
+            VkBufferCopy copyRegion{};
+            copyRegion.size = size;
+            vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
+        }
 
         transfers.push({ buffer.getStagingBuffer(), size, data });
     }

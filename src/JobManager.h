@@ -144,26 +144,44 @@ public:
         return _createTask(shaderPath, layout, &specializationInfo);
     }
 
-    Buffer createBuffer(size_t size)
+    Buffer createBuffer(size_t size, Buffer::Type type = Buffer::Type::DeviceLocal)
     {
         VkBuffer buffer;
         VkDeviceMemory bufferMemory;
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+        switch(type)
+        {
+        case Buffer::Type::DeviceLocal:
+            createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+            break;
+        case Buffer::Type::Uniform:
+            createBuffer(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, bufferMemory);
+            break;
+        case Buffer::Type::Staging:
+            createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, bufferMemory);
+            break;
+        }
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-        
-        Buffer *staging = new Buffer(stagingBuffer, stagingBufferMemory, size, Buffer::Type::Staging);
+        Buffer *staging = nullptr;
+        if (type == Buffer::Type::DeviceLocal)
+        {
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
+            createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+            
+            staging = new Buffer(stagingBuffer, stagingBufferMemory, size, Buffer::Type::Staging);
+
+            buffers.push_back(stagingBuffer);
+            allocatedMemory.push_back(stagingBufferMemory);
+        }
         
         buffers.push_back(buffer);
         allocatedMemory.push_back(bufferMemory);
-        buffers.push_back(stagingBuffer);
-        allocatedMemory.push_back(stagingBufferMemory);
 
-        return { buffer, bufferMemory, size, Buffer::Type::Local, staging };
+        return { buffer, bufferMemory, size, type, staging };
     }
 
     Image createImage(size_t width, size_t height)
