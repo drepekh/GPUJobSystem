@@ -22,6 +22,38 @@ const bool enableValidationLayers = true;
 #endif
 
 
+template<typename T>
+constexpr size_t argsSize()
+{
+    return sizeof(T);
+}
+
+template<typename T1, typename T2, typename... Args>
+constexpr size_t argsSize()
+{
+    return sizeof(T1) + argsSize<T2, Args...>();
+}
+
+template<typename T>
+void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint32_t id, const T& t)
+{
+    entry->constantID = id;
+    entry->offset = offset;
+    entry->size = sizeof(T);
+    memcpy(buffer, &t, sizeof(T));
+}
+
+template<typename T1, typename T2, typename... Args>
+void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint32_t id, const T1& t1, T2&& t2, Args&&... args)
+{
+    entry->constantID = id;
+    entry->offset = offset;
+    entry->size = sizeof(T1);
+    memcpy(buffer, &t1, sizeof(T1));
+    copyArgs<T2, Args...>(buffer + sizeof(T1), entry + 1, offset + sizeof(T1), id + 1, std::forward<T2>(t2), std::forward<Args>(args)...);
+}
+
+
 class JobManager
 {
 private:
@@ -91,19 +123,25 @@ public:
 
     Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout)
     {
-        std::vector<VkDescriptorSetLayout> layouts;
-        for (const auto &descriptorSetLayoutTypes: layout)
-        {
-            layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
-        }
-        auto pipelineLayout = createPipelineLayout(layouts);
-        auto pipeline = createComputePipeline(shaderPath, pipelineLayout);
+        return _createTask(shaderPath, layout);
+    }
 
-        std::copy(layouts.begin(), layouts.end(), std::back_inserter(descriptorSetLayouts));
-        pipelineLayouts.push_back(pipelineLayout);
-        pipelines.push_back(pipeline);
+    // special case for specialization constants
+    template<typename... Args>
+    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout, Args&&... args)
+    {
+        VkSpecializationMapEntry specializationMapEntries[sizeof...(Args)];
+        constexpr size_t dataSize = argsSize<Args...>();
+        char buffer[dataSize];
+        copyArgs<Args...>(buffer, specializationMapEntries, 0, 0, std::forward<Args>(args)...);
 
-        return { pipeline, pipelineLayout, layouts };
+        VkSpecializationInfo specializationInfo{};
+        specializationInfo.mapEntryCount = sizeof...(Args);
+        specializationInfo.pMapEntries = specializationMapEntries;
+        specializationInfo.dataSize = static_cast<uint32_t>(dataSize);
+        specializationInfo.pData = buffer;
+
+        return _createTask(shaderPath, layout, &specializationInfo);
     }
 
     Buffer createBuffer(size_t size)
@@ -497,7 +535,8 @@ private:
         return pipelineLayout;
     }
 
-    VkPipeline createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout)
+    VkPipeline createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout,
+        VkSpecializationInfo *specializationInfo)
     {
         auto shaderCode = readFile(shaderPath, true);
         VkShaderModule shaderModule = createShaderModule(shaderCode);
@@ -507,8 +546,7 @@ private:
         shaderStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
         shaderStage.module = shaderModule;
         shaderStage.pName = "main";
-        // TODO specialization constants
-        //shaderStage.pSpecializationInfo;
+        shaderStage.pSpecializationInfo = specializationInfo;
 
         VkComputePipelineCreateInfo computePipelineCreateInfo{};
         computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
@@ -995,6 +1033,24 @@ private:
         ifs.close();
 
         return data;
+    }
+
+    Task _createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
+        VkSpecializationInfo *specializationInfo = nullptr)
+    {
+        std::vector<VkDescriptorSetLayout> layouts;
+        for (const auto &descriptorSetLayoutTypes: layout)
+        {
+            layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
+        }
+        auto pipelineLayout = createPipelineLayout(layouts);
+        auto pipeline = createComputePipeline(shaderPath, pipelineLayout, specializationInfo);
+
+        std::copy(layouts.begin(), layouts.end(), std::back_inserter(descriptorSetLayouts));
+        pipelineLayouts.push_back(pipelineLayout);
+        pipelines.push_back(pipeline);
+
+        return { pipeline, pipelineLayout, layouts };
     }
 };
 
