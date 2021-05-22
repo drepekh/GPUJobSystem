@@ -125,6 +125,12 @@ void Job::syncResourceToDevice(const Resource &resource, const void *data, size_
         const Image &image = static_cast<const Image&>(resource);
         VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
 
+        if (data == nullptr)
+        {
+            manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+            return;
+        }
+
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
         manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
