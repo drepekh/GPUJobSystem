@@ -92,15 +92,18 @@ class Image : public Resource
     VkImageView imageView;
     size_t width;
     size_t height;
+    VkImageLayout layout;
     
 public:
-    Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height) :
+    Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height,
+            VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
         Resource(ResourceType::StorageImage),
         image(image),
         imageMemory(imageMemory),
         imageView(imageView),
         width(width),
-        height(height)
+        height(height),
+        layout(layout)
     {}
 
     VkImage getImage() const
@@ -127,6 +130,16 @@ public:
     {
         return height;
     }
+
+    VkImageLayout getLayout() const
+    {
+        return layout;
+    }
+
+    void setLayout(VkImageLayout layout)
+    {
+        this->layout = layout;
+    } 
 };
 
 

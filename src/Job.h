@@ -8,6 +8,7 @@
 class JobManager;
 class Task;
 class Buffer;
+class Image;
 class Resource;
 class ResourceSet;
 class Semaphore;
@@ -47,14 +48,19 @@ public:
     void useResources(size_t, const ResourceSet &);
     void useResources(size_t, const std::vector<Resource *> &);
     
-    void syncResourceToDevice(const Resource &resource, const void *data, size_t size, bool waitTillTransferDone = true);
-    void syncResourceToHost(const Resource &resource, void *data, size_t size, bool waitTillShaderDone = true);
+    void syncResourceToDevice(Resource &resource, const void *data, size_t size, bool waitTillTransferDone = true);
+    void syncResourceToHost(Resource &resource, void *data, size_t size, bool waitTillShaderDone = true);
+    void syncResources(Resource &src, Resource &dst);
 
     void waitForTasksFinish();
 
     Semaphore submit(bool signal = false);
     bool await(uint64_t timeout = UINT64_MAX);
     bool isComplete();
+
+    VkCommandBuffer getCommandBuffer() const;
+
+    void transitionImageLayout(Image &, VkImageLayout);
 
 private:
 

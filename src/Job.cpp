@@ -14,9 +14,12 @@ Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffe
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     // beginInfo.flags;
 
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+    if (fence != VK_NULL_HANDLE)
     {
-        throw std::runtime_error("failed to begin recording command buffer!");
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to begin recording command buffer!");
+        }
     }
 }
 
@@ -98,7 +101,7 @@ void Job::useResources(size_t index, const std::vector<Resource *> &resources)
     pendingBindings.push_back({index, resources});
 }
 
-void Job::syncResourceToDevice(const Resource &resource, const void *data, size_t size, bool waitTillTransferDone)
+void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size, bool waitTillTransferDone)
 {
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
@@ -122,12 +125,12 @@ void Job::syncResourceToDevice(const Resource &resource, const void *data, size_
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
-        const Image &image = static_cast<const Image&>(resource);
+        Image &image = static_cast<Image&>(resource);
         VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
 
         if (data == nullptr)
         {
-            manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+            transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
             return;
         }
 
@@ -138,9 +141,10 @@ void Job::syncResourceToDevice(const Resource &resource, const void *data, size_
 
         manager->copyDataToHostVisibleMemory(data, size, stagingBufferMemory);
 
-        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         manager->copyBufferToImage(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
-        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
+        image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
 
         transfers.push({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
@@ -168,7 +172,7 @@ void Job::syncResourceToDevice(const Resource &resource, const void *data, size_
     }
 }
 
-void Job::syncResourceToHost(const Resource &resource, void *data, size_t size, bool waitTillShaderDone)
+void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool waitTillShaderDone)
 {
     if (waitTillShaderDone)
     {
@@ -201,7 +205,7 @@ void Job::syncResourceToHost(const Resource &resource, void *data, size_t size, 
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
-        const Image &image = static_cast<const Image&>(resource);
+        Image &image = static_cast<Image&>(resource);
         VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
 
         VkBuffer stagingBuffer;
@@ -209,13 +213,35 @@ void Job::syncResourceToHost(const Resource &resource, void *data, size_t size, 
         manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         manager->copyImageToBuffer(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
-        manager->transitionImageLayout(commandBuffer, image.getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
+        image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
 
         Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
         
         transfers.push({ buffer, imageSize, data, true });
+    }
+    
+}
+
+void Job::syncResources(Resource &src, Resource &dst)
+{
+    if (src.getResourceType() == ResourceType::StorageImage && dst.getResourceType() == ResourceType::StorageImage)
+    {
+        Image &srcImg = static_cast<Image&>(src);
+        Image &dstImg = static_cast<Image&>(dst);
+
+        transitionImageLayout(srcImg, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(dstImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        manager->copyImageToImage(commandBuffer, srcImg.getImage(), srcImg.getLayout(), dstImg.getImage(), dstImg.getLayout(), 
+            std::min(srcImg.getWidth(), dstImg.getWidth()), std::min(srcImg.getHeight(), dstImg.getHeight()));
+        transitionImageLayout(srcImg, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(dstImg, VK_IMAGE_LAYOUT_GENERAL);
+    }
+    else
+    {
+        throw std::runtime_error("Unsupported sync between resources");
     }
     
 }
@@ -295,6 +321,11 @@ bool Job::isComplete()
     return await(0);
 }
 
+VkCommandBuffer Job::getCommandBuffer() const
+{
+    return commandBuffer;
+}
+
 void Job::completeTransfers()
 {
     while (!transfers.empty())
@@ -346,4 +377,12 @@ void Job::bindPendingResources(const Task &task)
     }
 
     pendingBindings.clear();
+}
+
+void Job::transitionImageLayout(Image &image, VkImageLayout newLayout)
+{
+    if (image.getLayout() == newLayout)
+        return;
+    manager->transitionImageLayout(commandBuffer, image.getImage(), image.getLayout(), newLayout);
+    image.setLayout(newLayout);
 }

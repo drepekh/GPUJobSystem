@@ -15,12 +15,6 @@
 #include <set>
 #include <functional>
 
-#ifdef NDEBUG
-const bool enableValidationLayers = false;
-#else
-const bool enableValidationLayers = true;
-#endif
-
 
 template<typename T>
 constexpr size_t argsSize()
@@ -97,6 +91,12 @@ private:
     const std::vector<const char*> deviceExtensions = {
         // VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
+
+    #ifdef NDEBUG
+    const bool enableValidationLayers = false;
+    #else
+    const bool enableValidationLayers = true;
+    #endif
 
     friend class Job;
 
@@ -221,7 +221,15 @@ public:
         return { this, computeQueue, commandBuffer, fence };
     }
 
-    virtual VkDevice getDevice()
+    Job createJob(VkCommandBuffer commandBuffer)
+    {
+        // auto fence = createFence();
+        // fences.push_back(fence);
+
+        return { this, computeQueue, commandBuffer, VK_NULL_HANDLE };
+    }
+
+    VkDevice getDevice()
     {
         return device;
     }
@@ -692,42 +700,45 @@ private:
         VkPipelineStageFlags sourceStage;
         VkPipelineStageFlags destinationStage;
 
-        if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        switch (oldLayout)
         {
+        case VK_IMAGE_LAYOUT_UNDEFINED:
             barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
             sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        }
-        else if ((oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL) ||
-            (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL))
-        {
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-
-            sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        }
-        else if (oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-        {
+            break;
+        case VK_IMAGE_LAYOUT_GENERAL:
             barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
             sourceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+        default:
+            throw std::invalid_argument("Unsupported layout transition!");
         }
-        else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL)
-        {
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        }
-        else
+        switch (newLayout)
         {
-            throw std::invalid_argument("unsupported layout transition!");
+        case VK_IMAGE_LAYOUT_GENERAL:
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            break;
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+            barrier.dstAccessMask = 0;
+            destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            break;
+        default:
+            throw std::invalid_argument("Unsupported layout transition!");
         }
 
         vkCmdPipelineBarrier(
@@ -778,6 +789,27 @@ private:
         };
 
         vkCmdCopyImageToBuffer(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+    }
+
+    void copyImageToImage(VkCommandBuffer commandBuffer, VkImage src, VkImageLayout srcLayout, VkImage dst, VkImageLayout dstLayout,
+        size_t width, size_t height)
+    {
+        VkImageSubresourceLayers layer{};
+        layer.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        layer.mipLevel = 0;
+        layer.baseArrayLayer = 0;
+        layer.layerCount = 1;
+
+        VkImageCopy region{};
+        region.srcSubresource = layer;
+        region.dstSubresource = layer;
+        region.extent = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height),
+            1
+        };
+
+        vkCmdCopyImage(commandBuffer, src, srcLayout, dst, dstLayout, 1, &region);
     }
 
     void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory)
