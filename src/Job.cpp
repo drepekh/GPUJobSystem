@@ -199,9 +199,13 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool w
             VkBufferCopy copyRegion{};
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
-        }
 
-        transfers.push({ buffer.getStagingBuffer(), size, data });
+            transfers.push({ buffer.getStagingBuffer(), size, data });
+        }
+        else
+        {
+            transfers.push({ &buffer, size, data });
+        }
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
@@ -238,6 +242,14 @@ void Job::syncResources(Resource &src, Resource &dst)
             std::min(srcImg.getWidth(), dstImg.getWidth()), std::min(srcImg.getHeight(), dstImg.getHeight()));
         transitionImageLayout(srcImg, VK_IMAGE_LAYOUT_GENERAL);
         transitionImageLayout(dstImg, VK_IMAGE_LAYOUT_GENERAL);
+    }
+    else if (src.getResourceType() == ResourceType::StorageBuffer && dst.getResourceType() == ResourceType::StorageBuffer)
+    {
+        Buffer &srcBuffer = static_cast<Buffer&>(src);
+        Buffer &dstBuffer = static_cast<Buffer&>(dst);
+
+        manager->copyBufferToBuffer(commandBuffer, srcBuffer.getBuffer(), dstBuffer.getBuffer(),
+            std::min(srcBuffer.getSize(), dstBuffer.getSize()));
     }
     else
     {

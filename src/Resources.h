@@ -15,16 +15,23 @@ enum class ResourceType {
 class Resource
 {
     ResourceType resourceType;
+    size_t size;
 
 protected:
-    Resource(ResourceType resourceType) :
-        resourceType(resourceType)
+    Resource(ResourceType resourceType, size_t size) :
+        resourceType(resourceType),
+        size(size)
     {}
 
 public:
     ResourceType getResourceType() const
     {
         return resourceType;
+    }
+
+    size_t getSize() const
+    {
+        return size;
     }
 };
 
@@ -41,18 +48,16 @@ public:
 private:
     VkBuffer buffer;
     VkDeviceMemory bufferMemory;
-    VkDeviceSize size;
     Type bufferType;
 
     Buffer *stagingBuffer;
 
 public:
 
-    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, VkDeviceSize size, Type type = Type::DeviceLocal, Buffer *staging = nullptr) :
-        Resource(ResourceType::StorageBuffer),
+    Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, size_t size, Type type = Type::DeviceLocal, Buffer *staging = nullptr) :
+        Resource(ResourceType::StorageBuffer, size),
         buffer(buffer),
         bufferMemory(bufferMemory),
-        size(size),
         bufferType(type),
         stagingBuffer(staging)
     {}
@@ -97,7 +102,7 @@ class Image : public Resource
 public:
     Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height,
             VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
-        Resource(ResourceType::StorageImage),
+        Resource(ResourceType::StorageImage, width * height * 4),
         image(image),
         imageMemory(imageMemory),
         imageView(imageView),

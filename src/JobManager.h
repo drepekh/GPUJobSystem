@@ -223,8 +223,8 @@ public:
 
     Job createJob(VkCommandBuffer commandBuffer)
     {
-        // auto fence = createFence();
-        // fences.push_back(fence);
+        if (commandBuffer == VK_NULL_HANDLE)
+            return createJob();
 
         return { this, computeQueue, commandBuffer, VK_NULL_HANDLE };
     }
@@ -810,6 +810,14 @@ private:
         };
 
         vkCmdCopyImage(commandBuffer, src, srcLayout, dst, dstLayout, 1, &region);
+    }
+
+    void copyBufferToBuffer(VkCommandBuffer commandBuffer, VkBuffer src, VkBuffer dst, size_t size,
+        size_t srcOffset = 0, size_t dstOffset = 0)
+    {
+        VkBufferCopy region = {srcOffset, dstOffset, size};
+
+        vkCmdCopyBuffer(commandBuffer, src, dst, 1, &region);
     }
 
     void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory)
