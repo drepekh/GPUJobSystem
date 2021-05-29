@@ -164,6 +164,9 @@ public:
             break;
         }
 
+        buffers.push_back(buffer);
+        allocatedMemory.push_back(bufferMemory);
+
         Buffer *staging = nullptr;
         if (type == Buffer::Type::DeviceLocal)
         {
@@ -177,9 +180,6 @@ public:
             buffers.push_back(stagingBuffer);
             allocatedMemory.push_back(stagingBufferMemory);
         }
-        
-        buffers.push_back(buffer);
-        allocatedMemory.push_back(bufferMemory);
 
         return { buffer, bufferMemory, size, type, staging };
     }
@@ -1108,12 +1108,12 @@ private:
         for (const auto &descriptorSetLayoutTypes: layout)
         {
             layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
+            descriptorSetLayouts.push_back(layouts.back());
         }
         auto pipelineLayout = createPipelineLayout(layouts);
-        auto pipeline = createComputePipeline(shaderPath, pipelineLayout, specializationInfo);
-
-        std::copy(layouts.begin(), layouts.end(), std::back_inserter(descriptorSetLayouts));
         pipelineLayouts.push_back(pipelineLayout);
+
+        auto pipeline = createComputePipeline(shaderPath, pipelineLayout, specializationInfo);
         pipelines.push_back(pipeline);
 
         return { pipeline, pipelineLayout, layouts };

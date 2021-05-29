@@ -5,6 +5,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#include "helpers.h"
+
+
 TEST_CASE("Job transfer tests", "[Job]")
 {
     JobManager manager;
@@ -20,20 +23,26 @@ TEST_CASE("Job transfer tests", "[Job]")
         SECTION("To/from device")
         {
             auto bufferType = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging, Buffer::Type::Uniform);
-            Buffer buffer = manager.createBuffer(dataSize, bufferType);
-            job.syncResourceToDevice(buffer, data, dataSize);
-            job.syncResourceToHost(buffer, result, dataSize);
+            SECTION(bufferTypeName(bufferType))
+            {
+                Buffer buffer = manager.createBuffer(dataSize, bufferType);
+                job.syncResourceToDevice(buffer, data, dataSize);
+                job.syncResourceToHost(buffer, result, dataSize);
+            }
         }
 
         SECTION("Between buffers")
         {
             auto bufferType1 = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging);
             auto bufferType2 = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging);
-            Buffer buffer1 = manager.createBuffer(dataSize, bufferType1);
-            Buffer buffer2 = manager.createBuffer(dataSize, bufferType2);
-            job.syncResourceToDevice(buffer1, data, dataSize);
-            job.syncResources(buffer1, buffer2);
-            job.syncResourceToHost(buffer2, result, dataSize);
+            SECTION(bufferTypeName(bufferType1) + " - " + bufferTypeName(bufferType2))
+            {
+                Buffer buffer1 = manager.createBuffer(dataSize, bufferType1);
+                Buffer buffer2 = manager.createBuffer(dataSize, bufferType2);
+                job.syncResourceToDevice(buffer1, data, dataSize);
+                job.syncResources(buffer1, buffer2);
+                job.syncResourceToHost(buffer2, result, dataSize);
+            }
         }
 
         job.submit();
@@ -71,6 +80,9 @@ TEST_CASE("Job transfer tests", "[Job]")
         REQUIRE(job.await());
 
         REQUIRE(std::equal(pixels, pixels + image.getSize(), result));
+
+        stbi_image_free(pixels);
+        delete[] result;
     }
 }
 
@@ -98,12 +110,95 @@ TEST_CASE("Job execute tests", "[Job]")
         uint32_t expected[count] = {1, 1, 2, 3, 5};
         
         job.syncResourceToDevice(buffer, data, dataSize);
-        job.addTask(task, {{ &buffer }}, count);
-        job.syncResourceToHost(buffer, data, dataSize);
+        
+        SECTION("with ResourceSet")
+        {
+            ResourceSet set = manager.createResourceSet({ &buffer });
+            SECTION("using useResources")
+            {
+                job.useResources(0, set);
+                job.addTask(task, count);
+            }
 
+            SECTION("using direct resource binding")
+            {
+                job.addTask(task, { set }, count);
+            }
+        }
+
+        SECTION("without ResourceSet")
+        {
+            SECTION("using useResources")
+            {
+                job.useResources(0, { &buffer });
+                job.addTask(task, count);
+            }
+
+            SECTION("using direct resource binding")
+            {
+                job.addTask(task, {{ &buffer }}, count);
+            }
+        }
+
+        job.syncResourceToHost(buffer, data, dataSize);
         job.submit();
         REQUIRE(job.await());
         
         REQUIRE(std::equal(data, data + count, expected));
+    }
+
+    SECTION("Multiple submit")
+    {
+        constexpr size_t count = 5;
+        constexpr size_t dataSize = count * sizeof(uint32_t);
+        Buffer buffer = manager.createBuffer(dataSize);
+        Task task = manager.createTask("../examples/shaders/fibonacci.spv",
+            {{ ResourceType::StorageBuffer }}, count);
+        
+        uint32_t data[count] = {1, 2, 3, 4, 5};
+        uint32_t expected[count] = {1, 1, 2, 3, 5};
+
+        job.syncResourceToDevice(buffer, data, dataSize);
+        job.addTask(task, {{ &buffer }}, count);
+        job.syncResourceToHost(buffer, data, dataSize);
+
+        for (size_t i = 0; i < 5; ++i)
+        {
+            job.submit();
+            REQUIRE(job.await());
+            REQUIRE(job.isComplete());
+            REQUIRE(std::equal(data, data + count, expected));
+        }
+    }
+
+    SECTION("Multiple task invokations")
+    {
+        constexpr size_t count = 5;
+        constexpr size_t dataSize = count * sizeof(uint32_t);
+        Task task = manager.createTask("../examples/shaders/sum.spv",
+            {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }}, count);
+
+        Buffer buffer1 = manager.createBuffer(dataSize);
+        Buffer buffer2 = manager.createBuffer(dataSize);
+        ResourceSet resourceSet = manager.createResourceSet({ &buffer1, &buffer2 });
+        ResourceSet resourceSet2 = manager.createResourceSet({ &buffer2, &buffer1 });
+
+        uint32_t data1[count] = {1, 2, 3, 4, 5};
+        uint32_t data2[count] = {10, 20, 30, 40, 50};
+        uint32_t expected1[count] = {12, 24, 36, 48, 60};
+        uint32_t expected2[count] = {11, 22, 33, 44, 55};
+
+        job.syncResourceToDevice(buffer1, data1, dataSize, false);
+        job.syncResourceToDevice(buffer2, data2, dataSize);
+        job.addTask(task, { resourceSet }, count);
+        job.waitForTasksFinish();
+        job.addTask(task, { resourceSet2 }, count);
+        job.syncResourceToHost(buffer1, data1, dataSize);
+        job.syncResourceToHost(buffer2, data2, dataSize, false);
+        job.submit();
+        REQUIRE(job.await());
+
+        REQUIRE(std::equal(data1, data1 + count, expected1));
+        REQUIRE(std::equal(data2, data2 + count, expected2));
     }
 }

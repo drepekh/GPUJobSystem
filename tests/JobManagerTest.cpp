@@ -3,6 +3,8 @@
 
 #include "JobManager.h"
 
+#include "helpers.h"
+
 
 TEST_CASE("JobManager resource creation", "[JobManager]")
 {
@@ -13,14 +15,17 @@ TEST_CASE("JobManager resource creation", "[JobManager]")
     SECTION("Buffer created")
     {
         auto type = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging, Buffer::Type::Uniform);
-        size_t size = 10;
-        Buffer buffer = manager.createBuffer(size, type);
+        SECTION(bufferTypeName(type))
+        {
+            size_t size = 10;
+            Buffer buffer = manager.createBuffer(size, type);
 
-        REQUIRE(buffer.getResourceType() == ResourceType::StorageBuffer);
-        REQUIRE(buffer.getBufferType() == type);
-        REQUIRE(buffer.getBuffer() != VK_NULL_HANDLE);
-        REQUIRE(buffer.getMemory() != VK_NULL_HANDLE);
-        REQUIRE(buffer.getSize() == size);
+            REQUIRE(buffer.getResourceType() == ResourceType::StorageBuffer);
+            REQUIRE(buffer.getBufferType() == type);
+            REQUIRE(buffer.getBuffer() != VK_NULL_HANDLE);
+            REQUIRE(buffer.getMemory() != VK_NULL_HANDLE);
+            REQUIRE(buffer.getSize() == size);
+        }
     }
 
     SECTION("Image created")
@@ -57,6 +62,17 @@ TEST_CASE("JobManager resource creation", "[JobManager]")
             Task task = manager.createTask("../examples/shaders/fibonacci.spv",
                 {{ ResourceType::StorageBuffer }}, 20);
         }
+    }
+
+    SECTION("ResourceSet created")
+    {
+        size_t size = 10;
+        Buffer buffer = manager.createBuffer(size);
+        size_t width = 10, height = 10;
+        Image image = manager.createImage(width, height);
+
+        ResourceSet set = manager.createResourceSet({ &buffer, &image });
+        REQUIRE(set.getDescriptorSet() != VK_NULL_HANDLE);
     }
 }
 
