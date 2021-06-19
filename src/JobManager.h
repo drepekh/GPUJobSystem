@@ -88,7 +88,7 @@ private:
         "VK_LAYER_KHRONOS_validation"
     };
 
-    const std::vector<const char*> deviceExtensions = {
+    const std::vector<std::string> deviceExtensions = {
         // VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 
@@ -102,8 +102,9 @@ private:
 
 public:
 
-    JobManager() :
-        manageInstance(true)
+    JobManager(const std::vector<std::string> extensions = {}) :
+        manageInstance(true),
+        deviceExtensions(extensions)
     {
         initVulkan();
     }
@@ -457,7 +458,10 @@ private:
         createInfo.pEnabledFeatures = &deviceFeatures;
 
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+        std::vector<const char*> extensions;
+        for (const auto &ext: deviceExtensions)
+            extensions.push_back(ext.data());
+        createInfo.ppEnabledExtensionNames = extensions.data();
 
         if (enableValidationLayers)
         {
