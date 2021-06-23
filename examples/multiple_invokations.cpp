@@ -1,6 +1,6 @@
 #include "JobManager.h"
 
-constexpr size_t arraySize = 20;
+constexpr uint32_t arraySize = 20;
 
 void printArray(std::string name, uint32_t *data)
 {
@@ -16,7 +16,7 @@ int main()
     size_t dataSize = sizeof(uint32_t) * arraySize;
 
     std::cout << "Before:";
-    for (size_t i = 0; i < arraySize; ++i)
+    for (uint32_t i = 0; i < arraySize; ++i)
     {
         data1[i] = i;
         data2[i] = i * 10;

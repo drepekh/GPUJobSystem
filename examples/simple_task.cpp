@@ -1,6 +1,6 @@
 #include "JobManager.h"
 
-constexpr size_t arraySize = 20;
+constexpr uint32_t arraySize = 20;
 
 int main()
 {
@@ -8,7 +8,7 @@ int main()
     size_t dataSize = sizeof(uint32_t) * arraySize;
 
     std::cout << "Before: ";
-    for (size_t i = 0; i < arraySize; ++i)
+    for (uint32_t i = 0; i < arraySize; ++i)
     {
         data[i] = i;
         std::cout << data[i] << ' ';
@@ -16,7 +16,7 @@ int main()
     std::cout << std::endl;
 
     JobManager manager;
-    Task task = manager.createTask("shaders/fibonacci.spv", {{ ResourceType::StorageBuffer }}, (uint32_t)arraySize);
+    Task task = manager.createTask("shaders/fibonacci.spv", {{ ResourceType::StorageBuffer }}, arraySize);
     Buffer buffer = manager.createBuffer(dataSize);
     Job job = manager.createJob();
 

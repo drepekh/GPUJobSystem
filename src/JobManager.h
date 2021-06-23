@@ -32,7 +32,7 @@ template<typename T>
 void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint32_t id, const T& t)
 {
     entry->constantID = id;
-    entry->offset = offset;
+    entry->offset = static_cast<uint32_t>(offset);
     entry->size = sizeof(T);
     memcpy(buffer, &t, sizeof(T));
 }
@@ -46,6 +46,15 @@ void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint
     memcpy(buffer, &t1, sizeof(T1));
     copyArgs<T2, Args...>(buffer + sizeof(T1), entry + 1, offset + sizeof(T1), id + 1, std::forward<T2>(t2), std::forward<Args>(args)...);
 }
+
+
+struct DeviceComputeLimits
+{
+    uint32_t maxComputeSharedMemorySize;
+    uint32_t maxComputeWorkGroupCount[3];
+    uint32_t maxComputeWorkGroupInvocations;
+    uint32_t maxComputeWorkGroupSize[3];
+};
 
 
 class JobManager
@@ -189,7 +198,8 @@ public:
     {
         VkImage image;
         VkDeviceMemory imageMemory;
-        createImage(width, height, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+        createImage(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+            VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, image, imageMemory);
 
@@ -233,6 +243,20 @@ public:
     VkDevice getDevice()
     {
         return device;
+    }
+
+    DeviceComputeLimits getComputeLimits()
+    {
+        VkPhysicalDeviceProperties deviceProperties;
+        vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+        DeviceComputeLimits limits{};
+        limits.maxComputeSharedMemorySize = deviceProperties.limits.maxComputeSharedMemorySize;
+        limits.maxComputeWorkGroupInvocations = deviceProperties.limits.maxComputeWorkGroupInvocations;
+        std::copy(deviceProperties.limits.maxComputeWorkGroupCount, deviceProperties.limits.maxComputeWorkGroupCount + 3,
+            limits.maxComputeWorkGroupCount);
+        std::copy(deviceProperties.limits.maxComputeWorkGroupSize, deviceProperties.limits.maxComputeWorkGroupSize + 3,
+            limits.maxComputeWorkGroupSize);
+        return limits;
     }
 
 private:
@@ -551,7 +575,7 @@ private:
     {
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = descriptorSetLayouts.size();
+        pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(descriptorSetLayouts.size());
         pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
         // pipelineLayoutInfo.pushConstantRangeCount;
         // pipelineLayoutInfo.pPushConstantRanges;
@@ -755,7 +779,7 @@ private:
         );
     }
 
-    void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+    void copyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, size_t width, size_t height)
     {
         VkBufferImageCopy region{};
         region.bufferOffset = 0;
@@ -767,15 +791,15 @@ private:
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {
-            width,
-            height,
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height),
             1
         };
 
         vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     }
 
-    void copyImageToBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+    void copyImageToBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, size_t width, size_t height)
     {
         VkBufferImageCopy region{};
         region.bufferOffset = 0;
@@ -787,8 +811,8 @@ private:
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {
-            width,
-            height,
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height),
             1
         };
 
@@ -914,7 +938,7 @@ private:
             VkWriteDescriptorSet write{};
             write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             write.dstSet = descriptorSet;
-            write.dstBinding = i;
+            write.dstBinding = static_cast<uint32_t>(i);
             write.dstArrayElement = 0;
             write.descriptorCount = 1;
 

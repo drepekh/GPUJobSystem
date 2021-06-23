@@ -3,3 +3,4 @@
 *.pdb
 *.spv
 *.obj
+/build
