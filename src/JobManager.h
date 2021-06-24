@@ -131,14 +131,16 @@ public:
         cleanupVulkan();
     }
 
-    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout)
+    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
+        uint32_t pushConstantSize = 0)
     {
-        return _createTask(shaderPath, layout);
+        return _createTask(shaderPath, layout, pushConstantSize);
     }
 
     // special case for specialization constants
     template<typename... Args>
-    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout, Args&&... args)
+    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
+        uint32_t pushConstantSize, Args&&... args)
     {
         VkSpecializationMapEntry specializationMapEntries[sizeof...(Args)];
         constexpr size_t dataSize = argsSize<Args...>();
@@ -151,7 +153,7 @@ public:
         specializationInfo.dataSize = static_cast<uint32_t>(dataSize);
         specializationInfo.pData = buffer;
 
-        return _createTask(shaderPath, layout, &specializationInfo);
+        return _createTask(shaderPath, layout, pushConstantSize, &specializationInfo);
     }
 
     Buffer createBuffer(size_t size, Buffer::Type type = Buffer::Type::DeviceLocal)
@@ -571,14 +573,22 @@ private:
         return createDescriptorSetLayout(descriptorTypes);
     }
 
-    VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts)
+    VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts,
+        uint32_t pushConstantSize)
     {
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(descriptorSetLayouts.size());
         pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts.data();
-        // pipelineLayoutInfo.pushConstantRangeCount;
-        // pipelineLayoutInfo.pPushConstantRanges;
+        VkPushConstantRange range{};
+        if (pushConstantSize > 0)
+        {
+            range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            range.offset = 0;
+            range.size = pushConstantSize;
+            pipelineLayoutInfo.pushConstantRangeCount = 1;
+            pipelineLayoutInfo.pPushConstantRanges = &range;
+        }
 
         VkPipelineLayout pipelineLayout;
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
@@ -1130,7 +1140,7 @@ private:
     }
 
     Task _createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-        VkSpecializationInfo *specializationInfo = nullptr)
+        uint32_t pushConstantSize, VkSpecializationInfo *specializationInfo = nullptr)
     {
         std::vector<VkDescriptorSetLayout> layouts;
         for (const auto &descriptorSetLayoutTypes: layout)
@@ -1138,7 +1148,7 @@ private:
             layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
             descriptorSetLayouts.push_back(layouts.back());
         }
-        auto pipelineLayout = createPipelineLayout(layouts);
+        auto pipelineLayout = createPipelineLayout(layouts, pushConstantSize);
         pipelineLayouts.push_back(pipelineLayout);
 
         auto pipeline = createComputePipeline(shaderPath, pipelineLayout, specializationInfo);

@@ -104,7 +104,7 @@ TEST_CASE("Job execute tests", "[Job]")
         constexpr size_t dataSize = count * sizeof(uint32_t);
         Buffer buffer = manager.createBuffer(dataSize);
         Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-            {{ ResourceType::StorageBuffer }}, count);
+            {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
         
         uint32_t data[count] = {1, 2, 3, 4, 5};
         uint32_t expected[count] = {1, 1, 2, 3, 5};
@@ -153,7 +153,7 @@ TEST_CASE("Job execute tests", "[Job]")
         constexpr size_t dataSize = count * sizeof(uint32_t);
         Buffer buffer = manager.createBuffer(dataSize);
         Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-            {{ ResourceType::StorageBuffer }}, count);
+            {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
         
         uint32_t data[count] = {1, 2, 3, 4, 5};
         uint32_t expected[count] = {1, 1, 2, 3, 5};
@@ -176,7 +176,7 @@ TEST_CASE("Job execute tests", "[Job]")
         constexpr size_t count = 5;
         constexpr size_t dataSize = count * sizeof(uint32_t);
         Task task = manager.createTask("../examples/shaders/sum.spv",
-            {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }}, count);
+            {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }});
 
         Buffer buffer1 = manager.createBuffer(dataSize);
         Buffer buffer2 = manager.createBuffer(dataSize);

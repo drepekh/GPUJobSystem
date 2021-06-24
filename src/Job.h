@@ -4,6 +4,8 @@
 #include <vulkan/vulkan.h>
 #include <queue>
 #include <variant>
+#include <memory>
+#include <optional>
 
 class JobManager;
 class Task;
@@ -21,9 +23,12 @@ class Job
     VkCommandBuffer commandBuffer;
     VkFence fence;
     VkSemaphore signalSemaphore;
+
     bool recorded = false;
     bool transfersComplete = true;
+
     std::vector<std::pair<size_t, std::variant<ResourceSet, std::vector<Resource *>>>> pendingBindings;
+    std::optional<std::pair<std::shared_ptr<void>, uint32_t>> pendingConstants;
 
     struct TransferInfo
     {
@@ -51,6 +56,8 @@ public:
     void syncResourceToDevice(Resource &resource, const void *data, size_t size, bool waitTillTransferDone = true);
     void syncResourceToHost(Resource &resource, void *data, size_t size, bool waitTillShaderDone = true);
     void syncResources(Resource &src, Resource &dst);
+
+    void pushConstants(void *data, size_t size);
 
     void waitForTasksFinish();
 

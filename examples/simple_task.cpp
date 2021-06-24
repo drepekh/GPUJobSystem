@@ -16,7 +16,7 @@ int main()
     std::cout << std::endl;
 
     JobManager manager;
-    Task task = manager.createTask("shaders/fibonacci.spv", {{ ResourceType::StorageBuffer }}, arraySize);
+    Task task = manager.createTask("shaders/fibonacci.spv", {{ ResourceType::StorageBuffer }}, 0, arraySize);
     Buffer buffer = manager.createBuffer(dataSize);
     Job job = manager.createJob();
 

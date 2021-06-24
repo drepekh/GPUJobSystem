@@ -258,6 +258,13 @@ void Job::syncResources(Resource &src, Resource &dst)
     
 }
 
+void Job::pushConstants(void *data, size_t size)
+{
+    std::shared_ptr<void> dst{ new char[size] };
+    std::memcpy(dst.get(), data, size);
+    pendingConstants = { dst, static_cast<uint32_t>(size) };
+}
+
 void Job::waitForTasksFinish()
 {
     VkMemoryBarrier barrier{};
@@ -388,7 +395,19 @@ void Job::bindPendingResources(const Task &task)
             0, nullptr);
     }
 
+    if (pendingConstants.has_value())
+    {
+        vkCmdPushConstants(
+            commandBuffer,
+            task.getPipelineLayout(),
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            0,
+            pendingConstants.value().second,
+            pendingConstants.value().first.get());
+    }
+
     pendingBindings.clear();
+    pendingConstants.reset();
 }
 
 void Job::transitionImageLayout(Image &image, VkImageLayout newLayout)
