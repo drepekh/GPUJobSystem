@@ -7,7 +7,8 @@ include_directories($ENV{VULKAN_SDK}/include)
 
 
 # library
-set(CommonSrc src/Job.cpp)
+set(CommonSrc src/Job.cpp
+              src/JobManager.cpp)
 
 add_library(GPUJobSystem ${CommonSrc})
 target_link_libraries(GPUJobSystem $ENV{VULKAN_SDK}/Lib/vulkan-1.lib)
