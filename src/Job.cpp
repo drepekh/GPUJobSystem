@@ -3,7 +3,7 @@
 #include "JobManager.h"
 #include "Resources.h"
 
-Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffer, VkFence fence) :
+Job::Job(JobManager *manager, VkCommandBuffer commandBuffer, VkQueue computeQueue, VkFence fence) :
     manager(manager),
     computeQueue(computeQueue),
     commandBuffer(commandBuffer),
@@ -14,11 +14,11 @@ Job::Job(JobManager *manager, VkQueue computeQueue, VkCommandBuffer commandBuffe
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     // beginInfo.flags;
 
-    if (fence != VK_NULL_HANDLE)
+    if (computeQueue != VK_NULL_HANDLE && fence != VK_NULL_HANDLE)
     {
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
         {
-            throw std::runtime_error("failed to begin recording command buffer!");
+            throw std::runtime_error("Failed to begin recording command buffer!");
         }
     }
 }
@@ -106,6 +106,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
         const Buffer &buffer = static_cast<const Buffer&>(resource);
+        size = std::min(size, buffer.getSize());
         switch(buffer.getBufferType())
         {
         case Buffer::Type::DeviceLocal:
@@ -126,7 +127,10 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
         Image &image = static_cast<Image&>(resource);
-        VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
+        VkDeviceSize imageSize = image.getSize();
+
+        if (size < imageSize)
+            throw std::runtime_error("The size of the passed data is smaller than the size of the image");
 
         if (data == nullptr)
         {
@@ -139,13 +143,12 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-        manager->copyDataToHostVisibleMemory(data, size, stagingBufferMemory);
+        manager->copyDataToHostVisibleMemory(data, imageSize, stagingBufferMemory);
 
         transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         manager->copyBufferToImage(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
-        image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
-
+        // mark staging buffer/memory for deletion after the task is finished
         transfers.push({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
 
@@ -197,6 +200,7 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool w
         if (buffer.getBufferType() == Buffer::Type::DeviceLocal)
         {
             VkBufferCopy copyRegion{};
+            size = std::min(size, buffer.getSize());
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
 
@@ -210,7 +214,10 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool w
     else if (resource.getResourceType() == ResourceType::StorageImage)
     {
         Image &image = static_cast<Image&>(resource);
-        VkDeviceSize imageSize = image.getWidth() * image.getHeight() * 4;
+        VkDeviceSize imageSize = image.getSize();
+
+        if (size < imageSize)
+            throw std::runtime_error("The size of the passed data is smaller than the size of the image");
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -220,10 +227,8 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool w
         transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         manager->copyImageToBuffer(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
-        image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
 
         Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
-        
         transfers.push({ buffer, imageSize, data, true });
     }
     
@@ -251,6 +256,7 @@ void Job::syncResources(Resource &src, Resource &dst)
         manager->copyBufferToBuffer(commandBuffer, srcBuffer.getBuffer(), dstBuffer.getBuffer(),
             std::min(srcBuffer.getSize(), dstBuffer.getSize()));
     }
+    // TODO buffer to image, image to buffer
     else
     {
         throw std::runtime_error("Unsupported sync between resources");
@@ -313,10 +319,8 @@ Semaphore Job::submit(bool signal)
 
     if (vkQueueSubmit(computeQueue, 1, &submitInfo, fence) != VK_SUCCESS)
     {
-        throw std::runtime_error("failed to submit draw command buffer!");
+        throw std::runtime_error("Failed to submit draw command buffer!");
     }
-
-    transfersComplete = false;
 
     return { signal ? signalSemaphore : VK_NULL_HANDLE };
 }
@@ -329,7 +333,7 @@ bool Job::await(uint64_t timeout)
         throw std::runtime_error("Failed to wait for fence!");
     }
 
-    if (res == VK_SUCCESS && !transfersComplete)
+    if (res == VK_SUCCESS)
         completeTransfers();
     
     return res == VK_SUCCESS;
@@ -362,8 +366,6 @@ void Job::completeTransfers()
             delete transferInfo.buffer;
         }
     }
-
-    transfersComplete = true;
 }
 
 void Job::bindPendingResources(const Task &task)

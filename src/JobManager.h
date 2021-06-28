@@ -48,15 +48,41 @@ void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint
 }
 
 
+/**
+ * @brief Various device limits related to compute shaders
+ * 
+ */
 struct DeviceComputeLimits
 {
+    /**
+     * @brief Maximum total storage size, in bytes, available for variables declared
+     * with the Workgroup storage class in shader modules
+     */
     uint32_t maxComputeSharedMemorySize;
+    /**
+     * @brief Maximum number of local workgroups that can be dispatched by a single
+     * dispatching command
+     */
     uint32_t maxComputeWorkGroupCount[3];
+    /**
+     * @brief Maximum total number of compute shader invocations in a single local
+     * workgroup
+     */
     uint32_t maxComputeWorkGroupInvocations;
+    /**
+     * @brief Maximum size of a local compute workgroup, per dimension
+     */
     uint32_t maxComputeWorkGroupSize[3];
 };
 
 
+/**
+ * @brief Class responsible for creation and management of all GPU-side resources.
+ * 
+ * Can be initialized either to create its own Vulkan resources or make use of already
+ * created instance/logical device, which may be used for integration with already
+ * existing pipeline.
+ */
 class JobManager
 {
 private:
@@ -110,15 +136,62 @@ private:
     friend class Job;
 
 public:
-
+    /**
+     * @brief Construct a new Job Manager object.
+     * 
+     * Picks physical device that will be used for all following operations and
+     * creates all needed GPU-side resources.
+     * 
+     * @param extensions List of the device extensions that should be ebanbled
+     */
     JobManager(const std::vector<std::string> extensions = {});
+
+    /**
+     * @brief Construct a new Job Manager object
+     * 
+     * Makes use of already initialized physical and logical devices instead of
+     * creating its own. Usuful for integration into exsisting pipeline.
+     * 
+     * @param physicalDevice Physical device that is going to be used for all
+     * following operations
+     * @param device Logical device that was created on picked \p physicalDevice
+     */
     JobManager(VkPhysicalDevice physicalDevice, VkDevice device);
+
+    /**
+     * @brief Destroy the Job Manager object
+     * 
+     */
     ~JobManager();
 
+    /**
+     * @brief Create a Task object
+     * 
+     * Create Task using provided shader and layout of resources used by the shader.
+     * Layout should match that of shader.
+     * 
+     * @param shaderPath Path to the already compiled SPIR-V shader
+     * @param layout Expected layout of the shader. Interpreted as a list of sets
+     * @param pushConstantSize Size of the structure that represents push constants
+     * @return Created Task
+     */
     Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
         uint32_t pushConstantSize = 0);
 
-    // special case for specialization constants
+    /**
+     * @brief Create a Task object
+     * 
+     * Create Task using provided shader and layout of resources used by the shader.
+     * Layout should match that of shader. Additionally makes use of provided
+     * specialization constants.
+     * 
+     * @tparam Args Typenames of the specialized constants
+     * @param shaderPath Path to the already compiled SPIR-V shader
+     * @param layout Expected layout of the shader. Interpreted as a list of sets
+     * @param pushConstantSize Size of the structure that represents push constants
+     * @param specializationConstants Specialized constants to be used in the shader
+     * @return Created Task
+     */
     template<typename... Args>
     Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
         uint32_t pushConstantSize, Args&&... specializationConstants)
@@ -137,12 +210,72 @@ public:
         return _createTask(shaderPath, layout, pushConstantSize, &specializationInfo);
     }
 
+    /**
+     * @brief Create a Buffer object
+     * 
+     * Memory type used by the buffer depends on its type. For every buffer
+     * with DeviceLocal \p type additional staging buffer of the same size will be
+     * allocated and used during the transfer operations to/from host.
+     * 
+     * @param size Size of the buffer in bytes
+     * @param type Type of the buffer
+     * @return Created Buffer
+     */
     Buffer createBuffer(size_t size, Buffer::Type type = Buffer::Type::DeviceLocal);
+
+    /**
+     * @brief Create an Image object
+     * 
+     * Created storage image has 4 channels and is allocated in the device-local memory.
+     * Initial layout is undefined, so call to Job::syncResourceToDevice() may be needed
+     * to change image layout before using it in the shader.
+     * 
+     * @param width Width of the image (in pixels)
+     * @param height Height of the image (in pixels)
+     * @return Created Image
+     */
     Image createImage(size_t width, size_t height);
+
+    /**
+     * @brief Create a Resource Set object
+     * 
+     * Combines list of resources into single ResourceSet. Useful when these resources
+     * are going to be used by the task that is going to be submitted multiple times
+     * because ResourceSet is going to be created on every call to Job::addTask(),
+     * which might be costly.  
+     * 
+     * @param resources List of resources
+     * @return Created ResourceSet
+     */
     ResourceSet createResourceSet(const std::vector<Resource *> &resources);
+
+    /**
+     * @brief Create a Job object
+     * 
+     * Either creates new command buffer or makes use of one passed as a parameter
+     * to create a Job object.
+     * 
+     * @param commandBuffer Already existing command buffer or nullptr to create
+     * a new one
+     * @return Created Job
+     */
     Job createJob(VkCommandBuffer commandBuffer = VK_NULL_HANDLE);
 
+    /**
+     * @brief Get the Device object
+     * 
+     * @return VkDevice used by this manager
+     */
     VkDevice getDevice();
+
+    /**
+     * @brief Get the Compute Limits object
+     * 
+     * Returns object with info about various compute limits of the currently used
+     * device.
+     * 
+     * @return DeviceComputeLimits
+     */
     DeviceComputeLimits getComputeLimits();
 
 private:
