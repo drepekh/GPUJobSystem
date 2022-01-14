@@ -34,7 +34,8 @@ class Job
     VkFence fence;
     VkSemaphore signalSemaphore;
 
-    bool recorded = false;
+    bool isRecorded = false;
+    bool autoDataDependencyManagement = true;
 
     std::vector<std::pair<size_t, std::variant<ResourceSet, std::vector<Resource *>>>> pendingBindings;
     std::optional<std::pair<std::shared_ptr<void>, uint32_t>> pendingConstants;
@@ -46,8 +47,16 @@ class Job
         void *dst;
         bool destroyAfterTransfer = false;
     };
-
+    // Pending host-visible to host transfers
     std::queue<TransferInfo> transfers;
+
+    enum class Operation {
+        None,
+        Transfer,
+        Task
+    };
+    
+    Operation lastRecordedOperation = Operation::None;
 
 public:
     /**
@@ -65,6 +74,22 @@ public:
      * @param fence Fence used to determine whether submitted work is done
      */
     Job(JobManager *manager, VkCommandBuffer commandBuffer, VkQueue computeQueue, VkFence fence);
+
+    /**
+     * @brief Set the Auto Data Dependency Management setting.
+     * 
+     * When set to true, job manager will automatically place barriers between 
+     * transfers and tasks. Set to false if you want to manually control memory
+     * barriers placement. You might find this useful when integrating manager
+     * with external pipeline. Should be called only prior to any other
+     * recording command. Right now this supports only transfer-task and 
+     * taks-transfer barriers. Task-task and transfer-transfet barriers should
+     * be placed manually regardless of the setting (see waitForTasksFinish()
+     * and waitAfterTransfers() for more details).
+     * 
+     * @param value New setting value.
+     */
+    void setAutoDataDependencyManagement(bool newValue);
     
     /**
      * @brief Add task execution to the job.
@@ -146,10 +171,8 @@ public:
      * @param data Source for the copy command, allocated on the host. Could be set to
      * nullptr to prepare image layout
      * @param size Amount of bytes to copy
-     * @param waitTillTransferDone Indicates whether GPU should wait for this transfer to
-     * be finished before executing next task
      */
-    void syncResourceToDevice(Resource &resource, const void *data, size_t size = UINT64_MAX, bool waitTillTransferDone = true);
+    void syncResourceToDevice(Resource &resource, const void *data, size_t size = UINT64_MAX);
 
     /**
      * @brief Copy data from the device to the host.
@@ -163,13 +186,12 @@ public:
      * @param resource Resource that will be a source for this copy operation
      * @param data Destination for the copy command, allocated on the host
      * @param size Amount of bytes to copy
-     * @param waitTillShaderDone Indicates whether GPU should wait for all previously 
-     * added tasks to be finished before executing this transfer.
      */
-    void syncResourceToHost(Resource &resource, void *data, size_t size = UINT64_MAX, bool waitTillShaderDone = true);
+    void syncResourceToHost(Resource &resource, void *data, size_t size = UINT64_MAX);
 
     /**
      * @brief Copy data from one resource to another.
+     * 
      * Copying takes place entirely on the GPU without transfers to/from host.
      * 
      * @param src Source for copy operation
@@ -197,6 +219,41 @@ public:
      * another task.
      */
     void waitForTasksFinish();
+
+    /**
+     * @brief Wait until resource transfers are complete.
+     * 
+     * Make GPU wait for the completion of the previously recorded resource
+     * transfers, thereby making them safe to use in the tasks that are added
+     * after call to this function.
+     * 
+     */
+    void waitAfterTransfers();
+
+    /**
+     * @brief Wait until tasks finish writing resources before they can be
+     * safely transfered or copied.
+     * 
+     * Make GPU wait for the completion of the previously added tasks before
+     * execution of the followed transfer operations. This ensures that tasks
+     * finish write operations on the resources and valid data is transfered.
+     * 
+     */
+    void waitBeforeTransfers();
+
+    /**
+     * @brief Record memory berrier.
+     * 
+     * Records global memory barrier with specific source and destination
+     * stages and masks.
+     * 
+     * @param srcStageMask Source stage mask
+     * @param srcAccessMask Source access mask
+     * @param dstStageMask Destination stage mask
+     * @param dstAccessMask Destination access mask
+     */
+    void addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
+        VkPipelineStageFlags dstStageMask, VkAccessFlags dstAccessMask);
 
     /**
      * @brief Submit job with all recorded operations to be executed on the GPU.

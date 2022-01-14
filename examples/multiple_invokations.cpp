@@ -34,7 +34,7 @@ int main()
     Job job = manager.createJob();
 
     // copy data to device
-    job.syncResourceToDevice(buffer1, data1, dataSize, false);
+    job.syncResourceToDevice(buffer1, data1, dataSize);
     job.syncResourceToDevice(buffer2, data2, dataSize);
     // execute task
     job.addTask(task, { resourceSet }, arraySize);
@@ -45,7 +45,7 @@ int main()
     job.addTask(task, arraySize);
     // copy data back to host
     job.syncResourceToHost(buffer1, data1, dataSize);
-    job.syncResourceToHost(buffer2, data2, dataSize, false);
+    job.syncResourceToHost(buffer2, data2, dataSize);
     // submit and wait until done
     job.submit();
     job.await();

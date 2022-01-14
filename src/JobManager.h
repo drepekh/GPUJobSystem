@@ -150,7 +150,7 @@ public:
      * @brief Construct a new Job Manager object
      * 
      * Makes use of already initialized physical and logical devices instead of
-     * creating its own. Usuful for integration into exsisting pipeline.
+     * creating its own. Useful for integration into exsisting pipeline.
      * 
      * @param physicalDevice Physical device that is going to be used for all
      * following operations

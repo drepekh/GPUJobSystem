@@ -16,12 +16,16 @@ class Resource
 {
     ResourceType resourceType;
     size_t size;
+    size_t ID;
 
 protected:
     Resource(ResourceType resourceType, size_t size) :
         resourceType(resourceType),
         size(size)
-    {}
+    {
+        static size_t nextID = 1;
+        ID = nextID++;
+    }
 
 public:
     ResourceType getResourceType() const
@@ -32,6 +36,11 @@ public:
     size_t getSize() const
     {
         return size;
+    }
+
+    size_t getID() const
+    {
+        return ID;
     }
 };
 
@@ -158,6 +167,7 @@ public:
 class ResourceSet
 {
     VkDescriptorSet descriptorSet;
+    std::vector<size_t> IDs;
 
 public:
     ResourceSet(VkDescriptorSet descriptorSet) :

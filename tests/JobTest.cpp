@@ -27,6 +27,7 @@ TEST_CASE("Job transfer tests", "[Job]")
             {
                 Buffer buffer = manager.createBuffer(dataSize, bufferType);
                 job.syncResourceToDevice(buffer, data, dataSize);
+                job.waitAfterTransfers();
                 job.syncResourceToHost(buffer, result, dataSize);
             }
         }
@@ -40,7 +41,9 @@ TEST_CASE("Job transfer tests", "[Job]")
                 Buffer buffer1 = manager.createBuffer(dataSize, bufferType1);
                 Buffer buffer2 = manager.createBuffer(dataSize, bufferType2);
                 job.syncResourceToDevice(buffer1, data, dataSize);
+                job.waitAfterTransfers();
                 job.syncResources(buffer1, buffer2);
+                job.waitAfterTransfers();
                 job.syncResourceToHost(buffer2, result, dataSize);
             }
         }
@@ -188,13 +191,13 @@ TEST_CASE("Job execute tests", "[Job]")
         uint32_t expected1[count] = {12, 24, 36, 48, 60};
         uint32_t expected2[count] = {11, 22, 33, 44, 55};
 
-        job.syncResourceToDevice(buffer1, data1, dataSize, false);
+        job.syncResourceToDevice(buffer1, data1, dataSize);
         job.syncResourceToDevice(buffer2, data2, dataSize);
         job.addTask(task, { resourceSet }, count);
         job.waitForTasksFinish();
         job.addTask(task, { resourceSet2 }, count);
         job.syncResourceToHost(buffer1, data1, dataSize);
-        job.syncResourceToHost(buffer2, data2, dataSize, false);
+        job.syncResourceToHost(buffer2, data2, dataSize);
         job.submit();
         REQUIRE(job.await());
 

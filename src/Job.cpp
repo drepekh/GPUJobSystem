@@ -23,17 +23,33 @@ Job::Job(JobManager *manager, VkCommandBuffer commandBuffer, VkQueue computeQueu
     }
 }
 
+void Job::setAutoDataDependencyManagement(bool value)
+{
+    autoDataDependencyManagement = value;
+}
+
 void Job::addTask(const Task &task, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
+    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
+    {
+        waitAfterTransfers();
+    }
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
     bindPendingResources(task);
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+    lastRecordedOperation = Operation::Task;
 }
 
 void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
+    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
+    {
+        waitAfterTransfers();
+    }
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
     bindPendingResources(task);
 
@@ -61,11 +77,17 @@ void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &
     }
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+    lastRecordedOperation = Operation::Task;
 }
 
 void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
+    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
+    {
+        waitAfterTransfers();
+    }
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
     bindPendingResources(task);
 
@@ -89,6 +111,7 @@ void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
     }
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+    lastRecordedOperation = Operation::Task;
 }
 
 void Job::useResources(size_t index, const ResourceSet &resources)
@@ -101,7 +124,7 @@ void Job::useResources(size_t index, const std::vector<Resource *> &resources)
     pendingBindings.push_back({index, resources});
 }
 
-void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size, bool waitTillTransferDone)
+void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size)
 {
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
@@ -116,6 +139,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
             VkBufferCopy copyRegion{};
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
+            lastRecordedOperation = Operation::Transfer;
             break;
         }
         case Buffer::Type::Staging:
@@ -151,47 +175,14 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         // mark staging buffer/memory for deletion after the task is finished
         transfers.push({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
-
-    if (waitTillTransferDone)
-    {
-        VkMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        // barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        // barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        // barrier.buffer = buffer.getBuffer();
-        // barrier.offset = 0;
-        // barrier.size = size;
-
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0,
-            1, &barrier,
-            0, nullptr,
-            0, nullptr);
-    }
 }
 
-void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool waitTillShaderDone)
+void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
 {
-    if (waitTillShaderDone)
+    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Task)
     {
-        VkMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0,
-            1, &barrier,
-            0, nullptr,
-            0, nullptr);
+        waitBeforeTransfers();
+        lastRecordedOperation = Operation::None;
     }
 
     if (resource.getResourceType() == ResourceType::StorageBuffer)
@@ -203,7 +194,8 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size, bool w
             size = std::min(size, buffer.getSize());
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
-
+            // TODO mark lastRecordedOperation?
+            
             transfers.push({ buffer.getStagingBuffer(), size, data });
         }
         else
@@ -273,15 +265,43 @@ void Job::pushConstants(void *data, size_t size)
 
 void Job::waitForTasksFinish()
 {
+    addMemoryBarrier(
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+}
+
+void Job::waitAfterTransfers()
+{
+    addMemoryBarrier(
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_WRITE_BIT /*| VK_ACCESS_TRANSFER_READ_BIT*/,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+}
+
+void Job::waitBeforeTransfers()
+{
+    addMemoryBarrier(
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT);
+}
+
+void Job::addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
+    VkPipelineStageFlags dstStageMask, VkAccessFlags dstAccessMask)
+{
     VkMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.srcAccessMask = srcAccessMask;
+    barrier.dstAccessMask = dstAccessMask;
 
     vkCmdPipelineBarrier(
         commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        srcStageMask,
+        dstStageMask,
         0,
         1, &barrier,
         0, nullptr,
@@ -290,13 +310,13 @@ void Job::waitForTasksFinish()
 
 Semaphore Job::submit(bool signal)
 {
-    if (!recorded)
+    if (!isRecorded)
     {
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to record command buffer!");
         }
-        recorded = true;
+        isRecorded = true;
     }
 
     VkSubmitInfo submitInfo{};
