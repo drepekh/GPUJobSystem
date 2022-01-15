@@ -158,19 +158,21 @@ TEST_CASE("Job execute tests", "[Job]")
         Task task = manager.createTask("../examples/shaders/fibonacci.spv",
             {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
         
-        uint32_t data[count] = {1, 2, 3, 4, 5};
-        uint32_t expected[count] = {1, 1, 2, 3, 5};
+        uint32_t inData[count] = {1, 2, 3, 4, 5};
+        uint32_t outData[count];
+        uint32_t expectedData[count] = {1, 1, 2, 3, 5};
 
-        job.syncResourceToDevice(buffer, data, dataSize);
+        job.syncResourceToDevice(buffer, inData, dataSize);
         job.addTask(task, {{ &buffer }}, count);
-        job.syncResourceToHost(buffer, data, dataSize);
+        job.syncResourceToHost(buffer, outData, dataSize);
 
         for (size_t i = 0; i < 5; ++i)
         {
+            std::fill(outData, outData + count, 0);
             job.submit();
             REQUIRE(job.await());
             REQUIRE(job.isComplete());
-            REQUIRE(std::equal(data, data + count, expected));
+            REQUIRE(std::equal(outData, outData + count, expectedData));
         }
     }
 

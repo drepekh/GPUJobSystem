@@ -40,15 +40,21 @@ class Job
     std::vector<std::pair<size_t, std::variant<ResourceSet, std::vector<Resource *>>>> pendingBindings;
     std::optional<std::pair<std::shared_ptr<void>, uint32_t>> pendingConstants;
 
+    template <typename T>
     struct TransferInfo
     {
-        const Buffer *buffer;
+        const Buffer *deviceBuffer;
         size_t size;
-        void *dst;
+        T hostBuffer;
         bool destroyAfterTransfer = false;
     };
+    using TransferInfoToHost = TransferInfo<void *>;
+    using TransferInfoFromHost = TransferInfo<const void *>;
+
+    // Pending host to host-visible transfers
+    std::vector<TransferInfoFromHost> preExecutionTransfers;
     // Pending host-visible to host transfers
-    std::queue<TransferInfo> transfers;
+    std::vector<TransferInfoToHost> postExecutionTransfers;
 
     enum class Operation {
         None,
@@ -83,7 +89,7 @@ public:
      * barriers placement. You might find this useful when integrating manager
      * with external pipeline. Should be called only prior to any other
      * recording command. Right now this supports only transfer-task and 
-     * taks-transfer barriers. Task-task and transfer-transfet barriers should
+     * taks-transfer barriers. Task-task and transfer-transfer barriers should
      * be placed manually regardless of the setting (see waitForTasksFinish()
      * and waitAfterTransfers() for more details).
      * 
@@ -160,8 +166,10 @@ public:
     /**
      * @brief Copy data from the host to the device.
      * 
-     * Copying to the host-visible memory takes place at the time of this function's
-     * call. If needed, copy command is added to the command buffer to copy data from
+     * Copying to the host-visible memory takes place either when the submit()
+     * is called or manually with the completePreExecutionTransfers() call,
+     * meaning that \p data should be available at the moment of either of these calls.
+     * If needed, copy command is added to the command buffer to copy data from
      * host-visible to device-local data. Actual amount of bytes that will be copied
      * is minimum between \p size and actual size of the resource. Should be called
      * at least once on every image resource before using it in the task, even if
@@ -309,7 +317,19 @@ public:
      * class (meaning submit() was not called) and only after all submited work
      * is done.
      */
-    void completeTransfers();
+    void completePostExecutionTransfers();
+
+    /**
+     * @brief Complete transfers from host memory to host-visible memory of
+     * the device.
+     * 
+     * Usually Job automatically takes care of this by calling this function
+     * from inside the submit(), but you might want to call it manually when
+     * integrating JobManager with the external pipeline where command buffer
+     * is submited outside of the Job class (i.e. submit() is never called).
+     * 
+     */
+    void completePreExecutionTransfers();
 
 private:
     void bindPendingResources(const Task &);

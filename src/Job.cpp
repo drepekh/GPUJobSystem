@@ -134,7 +134,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         {
         case Buffer::Type::DeviceLocal:
         {
-            manager->copyDataToHostVisibleMemory(data, size, buffer.getStagingBuffer()->getMemory());
+            preExecutionTransfers.push_back({ buffer.getStagingBuffer(), size, data, false });
 
             VkBufferCopy copyRegion{};
             copyRegion.size = size;
@@ -144,7 +144,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         }
         case Buffer::Type::Staging:
         case Buffer::Type::Uniform:
-            manager->copyDataToHostVisibleMemory(data, size, buffer.getMemory());
+            preExecutionTransfers.push_back({ &buffer, size, data, false });
             break;
         }
     }
@@ -173,7 +173,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         manager->copyBufferToImage(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
         // mark staging buffer/memory for deletion after the task is finished
-        transfers.push({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
+        postExecutionTransfers.push_back({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
 }
 
@@ -196,11 +196,11 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
             vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
             // TODO mark lastRecordedOperation?
             
-            transfers.push({ buffer.getStagingBuffer(), size, data });
+            postExecutionTransfers.push_back({ buffer.getStagingBuffer(), size, data });
         }
         else
         {
-            transfers.push({ &buffer, size, data });
+            postExecutionTransfers.push_back({ &buffer, size, data });
         }
     }
     else if (resource.getResourceType() == ResourceType::StorageImage)
@@ -221,7 +221,7 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
 
         Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
-        transfers.push({ buffer, imageSize, data, true });
+        postExecutionTransfers.push_back({ buffer, imageSize, data, true });
     }
     
 }
@@ -319,6 +319,8 @@ Semaphore Job::submit(bool signal)
         isRecorded = true;
     }
 
+    completePreExecutionTransfers();
+
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
@@ -354,7 +356,7 @@ bool Job::await(uint64_t timeout)
     }
 
     if (res == VK_SUCCESS)
-        completeTransfers();
+        completePostExecutionTransfers();
     
     return res == VK_SUCCESS;
 }
@@ -369,21 +371,44 @@ VkCommandBuffer Job::getCommandBuffer() const
     return commandBuffer;
 }
 
-void Job::completeTransfers()
+void Job::completePostExecutionTransfers()
 {
-    while (!transfers.empty())
+    for (size_t i = 0; i < postExecutionTransfers.size(); ++i)
     {
-        auto transferInfo = transfers.front();
-        transfers.pop();
+        const auto& transferInfo = postExecutionTransfers[i];
 
-        if (transferInfo.dst != nullptr)
-            manager->copyDataFromHostVisibleMemory(transferInfo.dst, transferInfo.size, transferInfo.buffer->getMemory());
+        if (transferInfo.hostBuffer != nullptr)
+            manager->copyDataFromHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory());
 
         if (transferInfo.destroyAfterTransfer)
         {
-            vkDestroyBuffer(manager->device, transferInfo.buffer->getBuffer(), nullptr);
-            vkFreeMemory(manager->device, transferInfo.buffer->getMemory(), nullptr);
-            delete transferInfo.buffer;
+            vkDestroyBuffer(manager->device, transferInfo.deviceBuffer->getBuffer(), nullptr);
+            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr);
+            delete transferInfo.deviceBuffer;
+            
+            postExecutionTransfers.erase(postExecutionTransfers.begin() + i);
+            --i;
+        }
+    }
+}
+
+void Job::completePreExecutionTransfers()
+{
+    for (size_t i = 0; i < preExecutionTransfers.size(); ++i)
+    {
+        const auto& transferInfo = preExecutionTransfers[i];
+
+        if (transferInfo.hostBuffer != nullptr)
+            manager->copyDataToHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory());
+
+        if (transferInfo.destroyAfterTransfer)
+        {
+            vkDestroyBuffer(manager->device, transferInfo.deviceBuffer->getBuffer(), nullptr);
+            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr);
+            delete transferInfo.deviceBuffer;
+            
+            preExecutionTransfers.erase(preExecutionTransfers.begin() + i);
+            --i;
         }
     }
 }
