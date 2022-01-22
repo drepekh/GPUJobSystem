@@ -91,7 +91,7 @@ ResourceSet JobManager::createResourceSet(const std::vector<Resource *> &resourc
 
     descriptorSetLayouts.push_back(layout);
 
-    return { descriptorSet };
+    return { descriptorSet, resources };
 }
 
 Job JobManager::createJob(VkCommandBuffer commandBuffer)

@@ -30,98 +30,44 @@ void Job::setAutoDataDependencyManagement(bool value)
 
 void Job::addTask(const Task &task, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
-    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
-    {
-        waitAfterTransfers();
-    }
+    checkDataDependencyInPendingBindings();
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
     bindPendingResources(task);
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
-    lastRecordedOperation = Operation::Task;
 }
 
 void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
-    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
+    for (size_t i = 0; i < resources.size(); ++i)
     {
-        waitAfterTransfers();
+        useResources(i, resources.at(i));
     }
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
-    bindPendingResources(task);
-
-    if (resources.size() > 0)
-    {
-        std::vector<VkDescriptorSet> descriptorSets;
-        descriptorSets.reserve(resources.size());
-        for (size_t i = 0; i < resources.size(); ++i)
-        {
-            descriptorSets.push_back(manager->createDescriptorSet(
-                resourceToDescriptorType(resources.at(i)),
-                resources.at(i),
-                task.getDescriptorSetLayout(i)
-            ));
-        }
-
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            task.getPipelineLayout(),
-            0,
-            static_cast<uint32_t>(descriptorSets.size()),
-            descriptorSets.data(),
-            0, nullptr);
-    }
-
-    vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
-    lastRecordedOperation = Operation::Task;
+    addTask(task, groupX, groupY, groupZ);
 }
 
 void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
-    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Transfer)
+    for (size_t i = 0; i < resources.size(); ++i)
     {
-        waitAfterTransfers();
+        useResources(i, resources.at(i));
     }
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
-    bindPendingResources(task);
-
-    if (resources.size() > 0)
-    {
-        std::vector<VkDescriptorSet> descriptorSets;
-        descriptorSets.reserve(resources.size());
-        for (size_t i = 0; i < resources.size(); ++i)
-        {
-            descriptorSets.push_back(resources[i].getDescriptorSet());
-        }
-
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            task.getPipelineLayout(),
-            0,
-            static_cast<uint32_t>(descriptorSets.size()),
-            descriptorSets.data(),
-            0, nullptr);
-    }
-
-    vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
-    lastRecordedOperation = Operation::Task;
+    addTask(task, groupX, groupY, groupZ);
 }
 
 void Job::useResources(size_t index, const ResourceSet &resources)
 {
-    pendingBindings.push_back({index, resources});
+    pendingBindings.insert_or_assign(index, resources);
 }
 
 void Job::useResources(size_t index, const std::vector<Resource *> &resources)
 {
-    pendingBindings.push_back({index, resources});
+    pendingBindings.insert_or_assign(index, resources);
 }
 
 void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size)
@@ -136,10 +82,10 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         {
             preExecutionTransfers.push_back({ buffer.getStagingBuffer(), size, data, false });
 
+            checkDataDependency({ &resource }, Operation::Transfer, AccessType::Write);
             VkBufferCopy copyRegion{};
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getStagingBuffer()->getBuffer(), buffer.getBuffer(), 1, &copyRegion);
-            lastRecordedOperation = Operation::Transfer;
             break;
         }
         case Buffer::Type::Staging:
@@ -179,22 +125,16 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
 
 void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
 {
-    if (autoDataDependencyManagement && lastRecordedOperation == Operation::Task)
-    {
-        waitBeforeTransfers();
-        lastRecordedOperation = Operation::None;
-    }
-
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
         const Buffer &buffer = static_cast<const Buffer&>(resource);
         if (buffer.getBufferType() == Buffer::Type::DeviceLocal)
         {
+            checkDataDependency({ &resource }, Operation::Transfer, AccessType::Read);
             VkBufferCopy copyRegion{};
             size = std::min(size, buffer.getSize());
             copyRegion.size = size;
             vkCmdCopyBuffer(commandBuffer, buffer.getBuffer(), buffer.getStagingBuffer()->getBuffer(), 1, &copyRegion);
-            // TODO mark lastRecordedOperation?
             
             postExecutionTransfers.push_back({ buffer.getStagingBuffer(), size, data });
         }
@@ -223,7 +163,6 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
         Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
         postExecutionTransfers.push_back({ buffer, imageSize, data, true });
     }
-    
 }
 
 void Job::syncResources(Resource &src, Resource &dst)
@@ -245,6 +184,8 @@ void Job::syncResources(Resource &src, Resource &dst)
         Buffer &srcBuffer = static_cast<Buffer&>(src);
         Buffer &dstBuffer = static_cast<Buffer&>(dst);
 
+        checkDataDependency({ &src, &dst }, Operation::Transfer, { AccessType::Read, AccessType::Write });
+
         manager->copyBufferToBuffer(commandBuffer, srcBuffer.getBuffer(), dstBuffer.getBuffer(),
             std::min(srcBuffer.getSize(), dstBuffer.getSize()));
     }
@@ -253,7 +194,6 @@ void Job::syncResources(Resource &src, Resource &dst)
     {
         throw std::runtime_error("Unsupported sync between resources");
     }
-    
 }
 
 void Job::pushConstants(void *data, size_t size)
@@ -415,30 +355,48 @@ void Job::completePreExecutionTransfers()
 
 void Job::bindPendingResources(const Task &task)
 {
-    for (const auto &resource: pendingBindings)
+    std::vector<VkDescriptorSet> descriptorSets;
+    size_t currentFirstPos = pendingBindings.size() > 0 ? pendingBindings.begin()->first : 0;
+    for (const auto &[pos, resources]: pendingBindings)
     {
-        VkDescriptorSet descriptorSet;
-        if (std::holds_alternative<ResourceSet>(resource.second))
+        if (pos != currentFirstPos + descriptorSets.size())
         {
-            descriptorSet = std::get<ResourceSet>(resource.second).getDescriptorSet();
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                task.getPipelineLayout(),
+                static_cast<uint32_t>(currentFirstPos),
+                static_cast<uint32_t>(descriptorSets.size()),
+                descriptorSets.data(),
+                0, nullptr);
+            
+            currentFirstPos = pos;
+            descriptorSets.clear();
+        }
+
+        if (std::holds_alternative<ResourceSet>(resources))
+        {
+            descriptorSets.push_back(std::get<ResourceSet>(resources).getDescriptorSet());
         }
         else
         {
-            const auto &val = std::get<std::vector<Resource *>>(resource.second);
-            descriptorSet = manager->createDescriptorSet(
-                resourceToDescriptorType(val),
-                val,
-                task.getDescriptorSetLayout(resource.first)
-            );
+            const auto &val = std::get<std::vector<Resource *>>(resources);
+            descriptorSets.push_back(
+                manager->createDescriptorSet(
+                    resourceToDescriptorType(val),
+                    val,
+                    task.getDescriptorSetLayout(pos)));
         }
-        
+    }
+    if (descriptorSets.size() > 0)
+    {
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
             task.getPipelineLayout(),
-            static_cast<uint32_t>(resource.first),
-            1,
-            &descriptorSet,
+            static_cast<uint32_t>(currentFirstPos),
+            static_cast<uint32_t>(descriptorSets.size()),
+            descriptorSets.data(),
             0, nullptr);
     }
 
@@ -463,4 +421,172 @@ void Job::transitionImageLayout(Image &image, VkImageLayout newLayout)
         return;
     manager->transitionImageLayout(commandBuffer, image.getImage(), image.getLayout(), newLayout);
     image.setLayout(newLayout);
+}
+
+void Job::checkDataDependencyInPendingBindings()
+{
+    if (!autoDataDependencyManagement)
+        return;
+
+    std::vector<Resource *> allResources;
+    for (const auto &[pos, resources] : pendingBindings)
+    {
+        const auto &rs = std::holds_alternative<ResourceSet>(resources) ?
+            std::get<ResourceSet>(resources).getResources() :
+            std::get<std::vector<Resource *>>(resources);
+        allResources.insert(allResources.end(), rs.begin(), rs.end());
+    }
+
+    checkDataDependency(allResources, Operation::Task, AccessType::Read | AccessType::Write);
+}
+
+void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
+    Operation accessStage, AccessTypeFlags accessType)
+{
+    std::vector<AccessTypeFlags> accessTypes(requiredResources.size(), accessType);
+    checkDataDependency(requiredResources, accessStage, accessTypes);
+}
+
+void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
+    Operation accessStage, const std::vector<AccessTypeFlags> &accessTypes)
+{
+    if (!autoDataDependencyManagement)
+        return;
+    
+    if (requiredResources.size() != accessTypes.size())
+        throw std::runtime_error("Number of resources does not match number of elements in accessTypes array");
+    
+    // Different calls for different source stages
+    // TODO switch to synchronization2 ?
+    std::vector<VkBufferMemoryBarrier> shaderStageBarriers;
+    std::vector<VkBufferMemoryBarrier> transferStageBarriers;
+
+    // Accumulate access types for every unique resource
+    std::map<Resource *, AccessTypeFlags> uniqueResources;
+    for (size_t i = 0; i < requiredResources.size(); ++i)
+    {
+        auto it = uniqueResources.find(requiredResources.at(i));
+        if (it != uniqueResources.end())
+        {
+            it->second |= accessTypes.at(i);
+        }
+        else
+        {
+            uniqueResources.insert({ requiredResources.at(i), accessTypes.at(i) });
+        }
+    }
+
+    for (const auto &[resource, accessType] : uniqueResources)
+    {
+        auto it = unguardedResourceAccess.find(resource);
+        if (it != unguardedResourceAccess.end())
+        {
+            const auto &info = it->second;
+
+            // TODO images
+            if (it->first->getResourceType() != ResourceType::StorageBuffer)
+                throw std::runtime_error("Unsupported resource type");
+            
+            const auto* buffer = static_cast<const Buffer *>(it->first);
+
+            // two read operations do not require synchronization
+            if (info.accessType == AccessType::Read && accessType == AccessType::Read)
+                continue;
+
+            auto [srcStage, srcAccessMask] = mapStageAndAccessMask(info.accessStage, info.accessType);
+            auto [dstStage, dstAccessMask] = mapStageAndAccessMask(accessStage, accessType);
+            
+            if (info.accessStage == Operation::Task)
+            {
+                shaderStageBarriers.push_back(makeBufferMemoryBarrier(
+                    *buffer, srcAccessMask, dstAccessMask));
+            }
+            else if (info.accessStage == Operation::Transfer)
+            {
+                transferStageBarriers.push_back(makeBufferMemoryBarrier(
+                    *buffer, srcAccessMask, dstAccessMask));
+            }
+        }
+
+        unguardedResourceAccess.insert_or_assign(resource, ResourceAccesInfo{ accessType, accessStage });
+    }
+
+    auto dstStage = mapStage(accessStage);
+
+    if (shaderStageBarriers.size() > 0)
+    {
+        addResourceMemoryBarriers(shaderStageBarriers, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage);
+    }
+
+    if (transferStageBarriers.size() > 0)
+    {
+        addResourceMemoryBarriers(transferStageBarriers, VK_PIPELINE_STAGE_TRANSFER_BIT, dstStage);
+    }
+}
+
+VkBufferMemoryBarrier Job::makeBufferMemoryBarrier(const Buffer &buffer,
+    VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask)
+{
+    VkBufferMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcAccessMask = srcAccessMask;
+        barrier.dstAccessMask = dstAccessMask;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.buffer = buffer.getBuffer();
+        barrier.offset = 0;
+        barrier.size = VK_WHOLE_SIZE;
+    
+    return barrier;
+}
+
+void Job::addResourceMemoryBarriers(const std::vector<VkBufferMemoryBarrier> &barriers,
+    VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask)
+{
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        static_cast<uint32_t>(barriers.size()), barriers.data(),
+        0, nullptr);
+}
+
+std::pair<VkPipelineStageFlags, VkAccessFlags> Job::mapStageAndAccessMask(Operation accessStage, AccessTypeFlags accessType)
+{
+    VkAccessFlags accessFlags = 0;
+    switch (accessStage)
+    {
+        case Operation::Task:
+        {
+            if (accessType & AccessType::Read)
+                accessFlags |= VK_ACCESS_SHADER_READ_BIT;
+            if (accessType & AccessType::Write)
+                accessFlags |= VK_ACCESS_SHADER_WRITE_BIT;
+            return { VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, accessFlags };
+        }
+        case Operation::Transfer:
+        {
+            if (accessType & AccessType::Read)
+                accessFlags |= VK_ACCESS_TRANSFER_READ_BIT;
+            if (accessType & AccessType::Write)
+                accessFlags |= VK_ACCESS_TRANSFER_WRITE_BIT;
+            return { VK_PIPELINE_STAGE_TRANSFER_BIT, accessFlags };
+        }
+        default:
+            throw std::runtime_error("Unsupported operation");
+    }
+}
+
+VkPipelineStageFlags Job::mapStage(Operation accessStage)
+{
+    switch (accessStage)
+    {
+        case Operation::Task: return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        case Operation::Transfer: return VK_PIPELINE_STAGE_TRANSFER_BIT;
+        default:
+            throw std::runtime_error("Unsupported operation");
+    }
 }

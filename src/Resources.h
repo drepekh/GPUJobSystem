@@ -167,16 +167,22 @@ public:
 class ResourceSet
 {
     VkDescriptorSet descriptorSet;
-    std::vector<size_t> IDs;
+    std::vector<Resource *> resources;
 
 public:
-    ResourceSet(VkDescriptorSet descriptorSet) :
-        descriptorSet(descriptorSet)
+    ResourceSet(VkDescriptorSet descriptorSet, const std::vector<Resource *> &resources = {}) :
+        descriptorSet(descriptorSet),
+        resources(resources)
     {}
 
     VkDescriptorSet getDescriptorSet() const
     {
         return descriptorSet;
+    }
+
+    const std::vector<Resource *>& getResources() const
+    {
+        return resources;
     }
 };
 

@@ -2,10 +2,11 @@
 #define JOB_H
 
 #include <vulkan/vulkan.h>
-#include <queue>
 #include <variant>
 #include <memory>
 #include <optional>
+#include <map>
+#include <vector>
 
 class JobManager;
 class Task;
@@ -37,7 +38,7 @@ class Job
     bool isRecorded = false;
     bool autoDataDependencyManagement = true;
 
-    std::vector<std::pair<size_t, std::variant<ResourceSet, std::vector<Resource *>>>> pendingBindings;
+    std::map<size_t, std::variant<ResourceSet, std::vector<Resource *>>> pendingBindings;
     std::optional<std::pair<std::shared_ptr<void>, uint32_t>> pendingConstants;
 
     template <typename T>
@@ -61,8 +62,21 @@ class Job
         Transfer,
         Task
     };
-    
-    Operation lastRecordedOperation = Operation::None;
+
+    enum AccessType : uint8_t {
+        Read = 1,
+        Write = 2
+    };
+    using AccessTypeFlags = uint8_t;
+
+    struct ResourceAccesInfo
+    {
+        AccessTypeFlags accessType = 0;
+        Operation accessStage = Operation::None;
+    };
+
+    // information about last access to resource that was not synchronised with barrier
+    std::map<const Resource*, ResourceAccesInfo> unguardedResourceAccess;
 
 public:
     /**
@@ -333,6 +347,23 @@ public:
 
 private:
     void bindPendingResources(const Task &);
+
+    void checkDataDependencyInPendingBindings();
+
+    void checkDataDependency(const std::vector<Resource *> &requiredResources,
+        Operation accessStage, AccessTypeFlags accessType);
+    
+    void checkDataDependency(const std::vector<Resource *> &requiredResources,
+        Operation accessStage, const std::vector<AccessTypeFlags> &accessTypes);
+
+    VkBufferMemoryBarrier makeBufferMemoryBarrier(const Buffer &buffer,
+        VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask);
+    
+    void addResourceMemoryBarriers(const std::vector<VkBufferMemoryBarrier> &barriers,
+        VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask);
+    
+    std::pair<VkPipelineStageFlags, VkAccessFlags> mapStageAndAccessMask(Operation accessStage, AccessTypeFlags accessType);
+    VkPipelineStageFlags mapStage(Operation accessStage);
 };
 
 #endif // JOB_H

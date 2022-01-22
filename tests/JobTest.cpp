@@ -27,7 +27,6 @@ TEST_CASE("Job transfer tests", "[Job]")
             {
                 Buffer buffer = manager.createBuffer(dataSize, bufferType);
                 job.syncResourceToDevice(buffer, data, dataSize);
-                job.waitAfterTransfers();
                 job.syncResourceToHost(buffer, result, dataSize);
             }
         }
@@ -41,9 +40,7 @@ TEST_CASE("Job transfer tests", "[Job]")
                 Buffer buffer1 = manager.createBuffer(dataSize, bufferType1);
                 Buffer buffer2 = manager.createBuffer(dataSize, bufferType2);
                 job.syncResourceToDevice(buffer1, data, dataSize);
-                job.waitAfterTransfers();
                 job.syncResources(buffer1, buffer2);
-                job.waitAfterTransfers();
                 job.syncResourceToHost(buffer2, result, dataSize);
             }
         }
@@ -196,7 +193,6 @@ TEST_CASE("Job execute tests", "[Job]")
         job.syncResourceToDevice(buffer1, data1, dataSize);
         job.syncResourceToDevice(buffer2, data2, dataSize);
         job.addTask(task, { resourceSet }, count);
-        job.waitForTasksFinish();
         job.addTask(task, { resourceSet2 }, count);
         job.syncResourceToHost(buffer1, data1, dataSize);
         job.syncResourceToHost(buffer2, data2, dataSize);
