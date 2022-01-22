@@ -99,14 +99,14 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         Image &image = static_cast<Image&>(resource);
         VkDeviceSize imageSize = image.getSize();
 
-        if (size < imageSize)
-            throw std::runtime_error("The size of the passed data is smaller than the size of the image");
-
         if (data == nullptr)
         {
             transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
             return;
         }
+
+        if (size < imageSize)
+            throw std::runtime_error("The size of the passed data is smaller than the size of the image");
 
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;

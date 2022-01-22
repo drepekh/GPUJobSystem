@@ -19,15 +19,17 @@ TEST_CASE("Job transfer tests", "[Job]")
         constexpr size_t dataSize = count * sizeof(uint32_t);
         uint32_t data[count] = {1, 2, 3, 4, 5};
         uint32_t result[count];
+        Buffer buffer1;
+        Buffer buffer2;
 
         SECTION("To/from device")
         {
             auto bufferType = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging, Buffer::Type::Uniform);
             SECTION(bufferTypeName(bufferType))
             {
-                Buffer buffer = manager.createBuffer(dataSize, bufferType);
-                job.syncResourceToDevice(buffer, data, dataSize);
-                job.syncResourceToHost(buffer, result, dataSize);
+                buffer1 = manager.createBuffer(dataSize, bufferType);
+                job.syncResourceToDevice(buffer1, data, dataSize);
+                job.syncResourceToHost(buffer1, result, dataSize);
             }
         }
 
@@ -37,8 +39,8 @@ TEST_CASE("Job transfer tests", "[Job]")
             auto bufferType2 = GENERATE(Buffer::Type::DeviceLocal, Buffer::Type::Staging);
             SECTION(bufferTypeName(bufferType1) + " - " + bufferTypeName(bufferType2))
             {
-                Buffer buffer1 = manager.createBuffer(dataSize, bufferType1);
-                Buffer buffer2 = manager.createBuffer(dataSize, bufferType2);
+                buffer1 = manager.createBuffer(dataSize, bufferType1);
+                buffer2 = manager.createBuffer(dataSize, bufferType2);
                 job.syncResourceToDevice(buffer1, data, dataSize);
                 job.syncResources(buffer1, buffer2);
                 job.syncResourceToHost(buffer2, result, dataSize);
@@ -61,6 +63,7 @@ TEST_CASE("Job transfer tests", "[Job]")
 
         stbi_uc* result = new stbi_uc[texWidth * texHeight * 4];
         Image image = manager.createImage(texWidth, texHeight);
+        Image image2;
 
         job.syncResourceToDevice(image, pixels, image.getSize());
         
@@ -71,7 +74,7 @@ TEST_CASE("Job transfer tests", "[Job]")
 
         SECTION("Between images")
         {
-            Image image2 = manager.createImage(texWidth, texHeight);
+            image2 = manager.createImage(texWidth, texHeight);
             job.syncResources(image, image2);
             job.syncResourceToHost(image2, result, image2.getSize());
         }
@@ -105,6 +108,7 @@ TEST_CASE("Job execute tests", "[Job]")
         Buffer buffer = manager.createBuffer(dataSize);
         Task task = manager.createTask("../examples/shaders/fibonacci.spv",
             {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
+        ResourceSet set;
         
         uint32_t data[count] = {1, 2, 3, 4, 5};
         uint32_t expected[count] = {1, 1, 2, 3, 5};
@@ -113,7 +117,7 @@ TEST_CASE("Job execute tests", "[Job]")
         
         SECTION("with ResourceSet")
         {
-            ResourceSet set = manager.createResourceSet({ &buffer });
+            set = manager.createResourceSet({ &buffer });
             SECTION("using useResources")
             {
                 job.useResources(0, set);

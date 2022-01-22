@@ -10,14 +10,14 @@
 int main()
 {
     // load texture
-    std::string path = "resources/vulkan_11_rgba.png";
+    std::string path = "../examples/resources/vulkan_11_rgba.png";
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     unsigned char *imgOut = new unsigned char[texWidth * texHeight * 4];
 
     // create manager and resources
     JobManager manager;
-    Task task = manager.createTask("shaders/edgedetect.spv",
+    Task task = manager.createTask("../examples/shaders/edgedetect.spv",
         {{ ResourceType::StorageImage, ResourceType::StorageImage }});
     Image imageIn = manager.createImage(texWidth, texHeight);
     Image imageOut = manager.createImage(texWidth, texHeight);
@@ -32,5 +32,5 @@ int main()
     job.await();
 
     stbi_image_free(pixels);
-    stbi_write_png("resources/out.png", texWidth, texHeight, 4, imgOut, texWidth * 4);
+    stbi_write_png("../examples/resources/out.png", texWidth, texHeight, 4, imgOut, texWidth * 4);
 }

@@ -59,9 +59,16 @@ private:
     VkDeviceMemory bufferMemory;
     Type bufferType;
 
-    Buffer *stagingBuffer;
+    std::shared_ptr<Buffer> stagingBuffer;
 
 public:
+    Buffer() :
+        Resource(ResourceType::StorageBuffer, 0),
+        buffer(VK_NULL_HANDLE),
+        bufferMemory(VK_NULL_HANDLE),
+        bufferType(Type::DeviceLocal),
+        stagingBuffer(nullptr)
+    {}
 
     Buffer(VkBuffer buffer, VkDeviceMemory bufferMemory, size_t size, Type type = Type::DeviceLocal, Buffer *staging = nullptr) :
         Resource(ResourceType::StorageBuffer, size),
@@ -70,12 +77,6 @@ public:
         bufferType(type),
         stagingBuffer(staging)
     {}
-
-    ~Buffer()
-    {
-        if (stagingBuffer != nullptr)
-            delete stagingBuffer;
-    }
 
     VkBuffer getBuffer() const
     {
@@ -89,7 +90,7 @@ public:
 
     Buffer* getStagingBuffer() const
     {
-        return stagingBuffer;
+        return stagingBuffer.get();
     }
 
     Buffer::Type getBufferType() const
@@ -110,6 +111,17 @@ class Image : public Resource
     VkImageLayout layout;
     
 public:
+    Image() :
+        Resource(ResourceType::StorageImage, 0),
+        image(VK_NULL_HANDLE),
+        imageMemory(VK_NULL_HANDLE),
+        imageView(VK_NULL_HANDLE),
+        width(0),
+        height(0),
+        channels(0),
+        layout(VK_IMAGE_LAYOUT_UNDEFINED)
+    {}
+
     Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height,
             size_t channels, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
         Resource(ResourceType::StorageImage, width * height * channels),
@@ -170,6 +182,10 @@ class ResourceSet
     std::vector<Resource *> resources;
 
 public:
+    ResourceSet() :
+        descriptorSet(VK_NULL_HANDLE)
+    {}
+
     ResourceSet(VkDescriptorSet descriptorSet, const std::vector<Resource *> &resources = {}) :
         descriptorSet(descriptorSet),
         resources(resources)
