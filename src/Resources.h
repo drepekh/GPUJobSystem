@@ -109,6 +109,8 @@ class Image : public Resource
     size_t height;
     size_t channels;
     VkImageLayout layout;
+
+    std::shared_ptr<Buffer> stagingBuffer;
     
 public:
     Image() :
@@ -119,11 +121,12 @@ public:
         width(0),
         height(0),
         channels(0),
-        layout(VK_IMAGE_LAYOUT_UNDEFINED)
+        layout(VK_IMAGE_LAYOUT_UNDEFINED),
+        stagingBuffer(nullptr)
     {}
 
     Image(VkImage image, VkDeviceMemory imageMemory, VkImageView imageView, size_t width, size_t height,
-            size_t channels, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
+            size_t channels, Buffer *staging = nullptr, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
         Resource(ResourceType::StorageImage, width * height * channels),
         image(image),
         imageMemory(imageMemory),
@@ -131,7 +134,8 @@ public:
         width(width),
         height(height),
         channels(channels),
-        layout(layout)
+        layout(layout),
+        stagingBuffer(staging)
     {}
 
     VkImage getImage() const
@@ -172,7 +176,12 @@ public:
     void setLayout(VkImageLayout layout)
     {
         this->layout = layout;
-    } 
+    }
+
+    Buffer* getStagingBuffer() const
+    {
+        return stagingBuffer.get();
+    }
 };
 
 

@@ -225,12 +225,24 @@ public:
      * @brief Push constants that should be used by the next added task.
      * 
      * Only stores copy of the passed data, actual command is written to the command
-     * buffer on the next call of addTask().
+     * buffer on the next addTask() call.
      * 
      * @param data Location of the data that should be pushed to the device
      * @param size Size of the data
      */
-    void pushConstants(void *data, size_t size);
+    void pushConstants(const void *data, size_t size);
+
+    /**
+     * @brief Push constants that should be used by the next added task.
+     * 
+     * Only stores copy of the passed data, actual command is written to the command
+     * buffer on the next addTask() call.
+     * 
+     * @tparam T Data type
+     * @param data Data that should be pushed to the device
+     */
+    template <typename T>
+    void pushConstants(const T &data);
 
     /**
      * @brief Wait until tasks are completed.
@@ -359,11 +371,20 @@ private:
     VkBufferMemoryBarrier makeBufferMemoryBarrier(const Buffer &buffer,
         VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask);
     
-    void addResourceMemoryBarriers(const std::vector<VkBufferMemoryBarrier> &barriers,
-        VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask);
+    void addResourceMemoryBarriers(
+        const std::vector<VkBufferMemoryBarrier> &bufferBarriers,
+        const std::vector<VkImageMemoryBarrier> &imageBarriers,
+        VkPipelineStageFlags srcStageMask,
+        VkPipelineStageFlags dstStageMask);
     
     std::pair<VkPipelineStageFlags, VkAccessFlags> mapStageAndAccessMask(Operation accessStage, AccessTypeFlags accessType);
     VkPipelineStageFlags mapStage(Operation accessStage);
 };
+
+template <typename T>
+void Job::pushConstants(const T &data)
+{
+    pushConstants(&data, sizeof(data));
+}
 
 #endif // JOB_H

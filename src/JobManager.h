@@ -111,6 +111,8 @@ private:
     std::vector<VkPipelineLayout> pipelineLayouts;
     std::vector<VkPipeline> pipelines;
 
+    std::map<std::string, VkShaderModule> shaderModules;
+
     // allocated resources
     std::vector<VkBuffer> buffers;
     std::vector<VkDeviceMemory> allocatedMemory;
@@ -118,6 +120,8 @@ private:
     std::vector<VkImageView> imageViews;
 
     std::vector<VkFence> fences;
+
+    DeviceComputeLimits computeLimits;
 
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"
@@ -189,7 +193,7 @@ public:
      * @param shaderPath Path to the already compiled SPIR-V shader
      * @param layout Expected layout of the shader. Interpreted as a list of sets
      * @param pushConstantSize Size of the structure that represents push constants
-     * @param specializationConstants Specialized constants to be used in the shader
+     * @param specializationConstants Specialization constants to be used in the shader
      * @return Created Task
      */
     template<typename... Args>
@@ -278,6 +282,15 @@ public:
      */
     DeviceComputeLimits getComputeLimits();
 
+    /**
+     * @brief Cleanup allocated resources.
+     * 
+     * Everything that was created with functions create* will become invalid
+     * after this call. Using any of those resources will cause UB.
+     * 
+     */
+    void cleanupResources();
+
 private:
 
     void initVulkan();
@@ -296,6 +309,8 @@ private:
     bool isDeviceSuitable(VkPhysicalDevice device);
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 
+    void cacheComputeLimits();
+
     VkDescriptorSetLayout createDescriptorSetLayout(std::vector<VkDescriptorType> types);
     VkDescriptorSetLayout createDescriptorSetLayout(std::vector<ResourceType> types);
 
@@ -305,7 +320,7 @@ private:
         VkSpecializationInfo *specializationInfo);
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
-        VkDeviceMemory& bufferMemory);
+        VkDeviceMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties = 0);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
     void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
@@ -323,7 +338,7 @@ private:
     void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory);
     void copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory);
 
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties = 0);
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
     void createCommandPool();

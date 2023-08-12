@@ -3,7 +3,7 @@
 
 #include "JobManager.h"
 
-#include "helpers.h"
+#include "TestUtils.h"
 
 
 TEST_CASE("JobManager resource creation", "[JobManager]")
@@ -25,6 +25,15 @@ TEST_CASE("JobManager resource creation", "[JobManager]")
             REQUIRE(buffer.getBuffer() != VK_NULL_HANDLE);
             REQUIRE(buffer.getMemory() != VK_NULL_HANDLE);
             REQUIRE(buffer.getSize() == size);
+
+            if (type == Buffer::Type::DeviceLocal)
+            {
+                REQUIRE(buffer.getStagingBuffer() != nullptr);
+            }
+            else
+            {
+                REQUIRE(buffer.getStagingBuffer() == nullptr);
+            }
         }
     }
 
@@ -39,6 +48,7 @@ TEST_CASE("JobManager resource creation", "[JobManager]")
         REQUIRE(image.getView() != VK_NULL_HANDLE);
         REQUIRE(image.getWidth() == width);
         REQUIRE(image.getHeight() == height);
+        REQUIRE(image.getStagingBuffer() != nullptr);
     }
 
     SECTION("Job created")

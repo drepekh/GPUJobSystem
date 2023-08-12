@@ -105,21 +105,14 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
             return;
         }
 
-        if (size < imageSize)
-            throw std::runtime_error("The size of the passed data is smaller than the size of the image");
+        if (size != imageSize)
+            throw std::runtime_error("The size of the passed data does not match the size of the image");
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        manager->copyDataToHostVisibleMemory(data, imageSize, stagingBufferMemory);
+        preExecutionTransfers.push_back({ image.getStagingBuffer(), size, data, false });
 
         transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        manager->copyBufferToImage(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
+        manager->copyBufferToImage(commandBuffer, image.getStagingBuffer()->getBuffer(), image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
-        // mark staging buffer/memory for deletion after the task is finished
-        postExecutionTransfers.push_back({ new Buffer(stagingBuffer, stagingBufferMemory, 0, Buffer::Type::Staging), 0, nullptr, true });
     }
 }
 
@@ -131,6 +124,7 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
         if (buffer.getBufferType() == Buffer::Type::DeviceLocal)
         {
             checkDataDependency({ &resource }, Operation::Transfer, AccessType::Read);
+            
             VkBufferCopy copyRegion{};
             size = std::min(size, buffer.getSize());
             copyRegion.size = size;
@@ -151,17 +145,11 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
         if (size < imageSize)
             throw std::runtime_error("The size of the passed data is smaller than the size of the image");
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        manager->createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
         transitionImageLayout(image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        manager->copyImageToBuffer(commandBuffer, stagingBuffer, image.getImage(), image.getWidth(), image.getHeight());
+        manager->copyImageToBuffer(commandBuffer, image.getStagingBuffer()->getBuffer(), image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
 
-        Buffer *buffer = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
-        postExecutionTransfers.push_back({ buffer, imageSize, data, true });
+        postExecutionTransfers.push_back({ image.getStagingBuffer(), imageSize, data });
     }
 }
 
@@ -196,7 +184,7 @@ void Job::syncResources(Resource &src, Resource &dst)
     }
 }
 
-void Job::pushConstants(void *data, size_t size)
+void Job::pushConstants(const void *data, size_t size)
 {
     std::shared_ptr<void> dst{ new char[size] };
     std::memcpy(dst.get(), data, size);
@@ -205,6 +193,7 @@ void Job::pushConstants(void *data, size_t size)
 
 void Job::waitForTasksFinish()
 {
+    unguardedResourceAccess.clear();
     addMemoryBarrier(
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_WRITE_BIT,
@@ -483,28 +472,36 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
         {
             const auto &info = it->second;
 
-            // TODO images
-            if (it->first->getResourceType() != ResourceType::StorageBuffer)
-                throw std::runtime_error("Unsupported resource type");
-            
-            const auto* buffer = static_cast<const Buffer *>(it->first);
-
             // two read operations do not require synchronization
             if (info.accessType == AccessType::Read && accessType == AccessType::Read)
                 continue;
 
-            auto [srcStage, srcAccessMask] = mapStageAndAccessMask(info.accessStage, info.accessType);
-            auto [dstStage, dstAccessMask] = mapStageAndAccessMask(accessStage, accessType);
-            
-            if (info.accessStage == Operation::Task)
+            if (it->first->getResourceType() == ResourceType::StorageBuffer)
             {
-                shaderStageBarriers.push_back(makeBufferMemoryBarrier(
-                    *buffer, srcAccessMask, dstAccessMask));
+                const auto* buffer = static_cast<const Buffer *>(it->first);
+
+                auto [srcStage, srcAccessMask] = mapStageAndAccessMask(info.accessStage, info.accessType);
+                auto [dstStage, dstAccessMask] = mapStageAndAccessMask(accessStage, accessType);
+                
+                if (info.accessStage == Operation::Task)
+                {
+                    shaderStageBarriers.push_back(makeBufferMemoryBarrier(
+                        *buffer, srcAccessMask, dstAccessMask));
+                }
+                else if (info.accessStage == Operation::Transfer)
+                {
+                    transferStageBarriers.push_back(makeBufferMemoryBarrier(
+                        *buffer, srcAccessMask, dstAccessMask));
+                }
             }
-            else if (info.accessStage == Operation::Transfer)
+            else if (it->first->getResourceType() == ResourceType::StorageImage)
             {
-                transferStageBarriers.push_back(makeBufferMemoryBarrier(
-                    *buffer, srcAccessMask, dstAccessMask));
+                // TODO images
+                throw std::runtime_error("Unsupported resource type");
+            }
+            else
+            {
+                throw std::runtime_error("Unsupported resource type");
             }
         }
 
@@ -515,12 +512,12 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
 
     if (shaderStageBarriers.size() > 0)
     {
-        addResourceMemoryBarriers(shaderStageBarriers, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage);
+        addResourceMemoryBarriers(shaderStageBarriers, {}, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage);
     }
 
     if (transferStageBarriers.size() > 0)
     {
-        addResourceMemoryBarriers(transferStageBarriers, VK_PIPELINE_STAGE_TRANSFER_BIT, dstStage);
+        addResourceMemoryBarriers(transferStageBarriers, {}, VK_PIPELINE_STAGE_TRANSFER_BIT, dstStage);
     }
 }
 
@@ -541,8 +538,11 @@ VkBufferMemoryBarrier Job::makeBufferMemoryBarrier(const Buffer &buffer,
     return barrier;
 }
 
-void Job::addResourceMemoryBarriers(const std::vector<VkBufferMemoryBarrier> &barriers,
-    VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask)
+void Job::addResourceMemoryBarriers(
+    const std::vector<VkBufferMemoryBarrier> &bufferBarriers,
+    const std::vector<VkImageMemoryBarrier> &imageBarriers,
+    VkPipelineStageFlags srcStageMask,
+    VkPipelineStageFlags dstStageMask)
 {
     vkCmdPipelineBarrier(
         commandBuffer,
@@ -550,8 +550,8 @@ void Job::addResourceMemoryBarriers(const std::vector<VkBufferMemoryBarrier> &ba
         dstStageMask,
         0,
         0, nullptr,
-        static_cast<uint32_t>(barriers.size()), barriers.data(),
-        0, nullptr);
+        static_cast<uint32_t>(bufferBarriers.size()), bufferBarriers.size() ? bufferBarriers.data() : nullptr,
+        static_cast<uint32_t>(imageBarriers.size()), imageBarriers.size() ? imageBarriers.data() : nullptr);
 }
 
 std::pair<VkPipelineStageFlags, VkAccessFlags> Job::mapStageAndAccessMask(Operation accessStage, AccessTypeFlags accessType)

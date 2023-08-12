@@ -33,16 +33,29 @@ Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
     switch(type)
     {
     case Buffer::Type::DeviceLocal:
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, bufferMemory);
+        createBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            buffer,
+            bufferMemory);
         break;
     case Buffer::Type::Uniform:
-        createBuffer(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, bufferMemory);
+        createBuffer(
+            size,
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            buffer,
+            bufferMemory);
         break;
     case Buffer::Type::Staging:
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, bufferMemory);
+        createBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            buffer,
+            bufferMemory,
+            VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
         break;
     }
 
@@ -54,8 +67,13 @@ Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
     {
         VkBuffer stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
-        createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        createBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingBufferMemory,
+            VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
         
         staging = new Buffer(stagingBuffer, stagingBufferMemory, size, Buffer::Type::Staging);
 
@@ -81,7 +99,23 @@ Image JobManager::createImage(size_t width, size_t height)
     imageViews.push_back(imageView);
     allocatedMemory.push_back(imageMemory);
 
-    return { image, imageMemory, imageView, width, height, 4 };
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    size_t imageSize = width * height * 4;
+    createBuffer(
+        imageSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer,
+        stagingBufferMemory,
+        VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    
+    Buffer *staging = new Buffer(stagingBuffer, stagingBufferMemory, imageSize, Buffer::Type::Staging);
+
+    buffers.push_back(stagingBuffer);
+    allocatedMemory.push_back(stagingBufferMemory);
+
+    return { image, imageMemory, imageView, width, height, 4, staging };
 }
 
 ResourceSet JobManager::createResourceSet(const std::vector<Resource *> &resources)
@@ -114,16 +148,7 @@ VkDevice JobManager::getDevice()
 
 DeviceComputeLimits JobManager::getComputeLimits()
 {
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
-    DeviceComputeLimits limits{};
-    limits.maxComputeSharedMemorySize = deviceProperties.limits.maxComputeSharedMemorySize;
-    limits.maxComputeWorkGroupInvocations = deviceProperties.limits.maxComputeWorkGroupInvocations;
-    std::copy(deviceProperties.limits.maxComputeWorkGroupCount, deviceProperties.limits.maxComputeWorkGroupCount + 3,
-        limits.maxComputeWorkGroupCount);
-    std::copy(deviceProperties.limits.maxComputeWorkGroupSize, deviceProperties.limits.maxComputeWorkGroupSize + 3,
-        limits.maxComputeWorkGroupSize);
-    return limits;
+    return computeLimits;
 }
 
 void JobManager::initVulkan()
@@ -135,38 +160,20 @@ void JobManager::initVulkan()
         pickPhysicalDevice();
         createLogicalDevice();
     }
+    cacheComputeLimits();
     createCommandPool();
     createDescriptorPool();
 }
 
 void JobManager::cleanupVulkan()
 {
-    for (auto fence: fences)
-        vkDestroyFence(device, fence, nullptr);
+    cleanupResources();
 
-    for (auto buffer: buffers)
-        vkDestroyBuffer(device, buffer, nullptr);
-    
-    for (auto imageView: imageViews)
-        vkDestroyImageView(device, imageView, nullptr);
-    
-    for (auto image: images)
-        vkDestroyImage(device, image, nullptr);
-    
-    for (auto memory: allocatedMemory)
-        vkFreeMemory(device, memory, nullptr);
-
-    for (auto pipeline: pipelines)
-        vkDestroyPipeline(device, pipeline, nullptr);
-    
-    for (auto pipelineLayout: pipelineLayouts)
-        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-
-    for (auto descriptorSetLayout: descriptorSetLayouts)
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-    
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyCommandPool(device, commandPool, nullptr);
+
+    for (auto shaderModule : shaderModules)
+        vkDestroyShaderModule(device, shaderModule.second, nullptr);
 
     if (manageInstance)
     {
@@ -178,6 +185,41 @@ void JobManager::cleanupVulkan()
         }
         vkDestroyInstance(instance, nullptr);
     }
+}
+
+void JobManager::cleanupResources()
+{
+    for (auto fence: fences)
+        vkDestroyFence(device, fence, nullptr);
+    fences.clear();
+
+    for (auto buffer: buffers)
+        vkDestroyBuffer(device, buffer, nullptr);
+    buffers.clear();
+    
+    for (auto imageView: imageViews)
+        vkDestroyImageView(device, imageView, nullptr);
+    imageViews.clear();
+    
+    for (auto image: images)
+        vkDestroyImage(device, image, nullptr);
+    images.clear();
+    
+    for (auto memory: allocatedMemory)
+        vkFreeMemory(device, memory, nullptr);
+    allocatedMemory.clear();
+
+    for (auto pipeline: pipelines)
+        vkDestroyPipeline(device, pipeline, nullptr);
+    pipelines.clear();
+    
+    for (auto pipelineLayout: pipelineLayouts)
+        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    pipelineLayouts.clear();
+
+    for (auto descriptorSetLayout: descriptorSetLayouts)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    descriptorSetLayouts.clear();
 }
 
 void JobManager::createInstance()
@@ -397,6 +439,19 @@ bool JobManager::checkDeviceExtensionSupport(VkPhysicalDevice device)
     return requiredExtensions.empty();
 }
 
+void JobManager::cacheComputeLimits()
+{
+    VkPhysicalDeviceProperties deviceProperties;
+    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+    computeLimits = DeviceComputeLimits{};
+    computeLimits.maxComputeSharedMemorySize = deviceProperties.limits.maxComputeSharedMemorySize;
+    computeLimits.maxComputeWorkGroupInvocations = deviceProperties.limits.maxComputeWorkGroupInvocations;
+    std::copy(deviceProperties.limits.maxComputeWorkGroupCount, deviceProperties.limits.maxComputeWorkGroupCount + 3,
+        computeLimits.maxComputeWorkGroupCount);
+    std::copy(deviceProperties.limits.maxComputeWorkGroupSize, deviceProperties.limits.maxComputeWorkGroupSize + 3,
+        computeLimits.maxComputeWorkGroupSize);
+}
+
 VkDescriptorSetLayout JobManager::createDescriptorSetLayout(std::vector<VkDescriptorType> types)
 {
     // TODO
@@ -465,8 +520,18 @@ VkPipelineLayout JobManager::createPipelineLayout(const std::vector<VkDescriptor
 VkPipeline JobManager::createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout,
     VkSpecializationInfo *specializationInfo)
 {
-    auto shaderCode = readFile(shaderPath, true);
-    VkShaderModule shaderModule = createShaderModule(shaderCode);
+    VkShaderModule shaderModule;
+    auto it = shaderModules.find(shaderPath);
+    if (it != shaderModules.end())
+    {
+        shaderModule = it->second;
+    }
+    else
+    {
+        auto shaderCode = readFile(shaderPath, true);
+        shaderModule = createShaderModule(shaderCode);
+        shaderModules.insert({ shaderPath, shaderModule });
+    }
 
     VkPipelineShaderStageCreateInfo shaderStage = {};
     shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -487,13 +552,11 @@ VkPipeline JobManager::createComputePipeline(const std::string &shaderPath, VkPi
         throw std::runtime_error("Failed to create compute pipeline!");
     }
 
-    vkDestroyShaderModule(device, shaderModule, nullptr);
-
     return pipeline;
 }
 
 void JobManager::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
-    VkDeviceMemory& bufferMemory)
+    VkDeviceMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -512,7 +575,7 @@ void JobManager::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, optionalProperties);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
     {
@@ -737,10 +800,19 @@ void JobManager::copyDataFromHostVisibleMemory(void *data, size_t size, VkDevice
     vkUnmapMemory(device, memory);
 }
 
-uint32_t JobManager::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+uint32_t JobManager::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
 {
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+    optionalProperties |= properties;
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+    {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & optionalProperties) == optionalProperties)
+        {
+            return i;
+        }
+    }
 
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
     {

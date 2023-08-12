@@ -5,7 +5,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#include "helpers.h"
+#include "TestUtils.h"
 
 
 TEST_CASE("Job transfer tests", "[Job]")
