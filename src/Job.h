@@ -1,6 +1,8 @@
 #ifndef JOB_H
 #define JOB_H
 
+#include "Resources.h"
+
 #include <vulkan/vulkan.h>
 #include <variant>
 #include <memory>
@@ -63,12 +65,6 @@ class Job
         Task
     };
 
-    enum AccessType : uint8_t {
-        Read = 1,
-        Write = 2
-    };
-    using AccessTypeFlags = uint8_t;
-
     struct ResourceAccesInfo
     {
         AccessTypeFlags accessType = 0;
@@ -120,8 +116,9 @@ public:
      * @param groupX Number of local workgroups to dispatch in the X dimension
      * @param groupY Number of local workgroups to dispatch in the Y dimension
      * @param groupZ Number of local workgroups to dispatch in the Z dimension
+     * @return Reference to this Job
      */
-    void addTask(const Task &task, uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
+    Job& addTask(const Task &task, uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
 
     /**
      * @brief Add task execution to the job.
@@ -136,8 +133,9 @@ public:
      * @param groupX Number of local workgroups to dispatch in the X dimension
      * @param groupY Number of local workgroups to dispatch in the Y dimension
      * @param groupZ Number of local workgroups to dispatch in the Z dimension
+     * @return Reference to this Job
      */
-    void addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
+    Job& addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
         uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
     
     /**
@@ -152,8 +150,9 @@ public:
      * @param groupX Number of local workgroups to dispatch in the X dimension
      * @param groupY Number of local workgroups to dispatch in the Y dimension
      * @param groupZ Number of local workgroups to dispatch in the Z dimension
+     * @return Reference to this Job
      */
-    void addTask(const Task &task, const std::vector<ResourceSet> &resources,
+    Job& addTask(const Task &task, const std::vector<ResourceSet> &resources,
         uint32_t groupX, uint32_t groupY = 1, uint32_t groupZ = 1);
     
     /**
@@ -162,8 +161,9 @@ public:
      * 
      * @param set Set number of the resources to be bound
      * @param resources Resource set that should be bound
+     * @return Reference to this Job
      */
-    void useResources(size_t set, const ResourceSet &resources);
+    Job& useResources(size_t set, const ResourceSet &resources);
 
     /**
      * @brief Bind resources that should be used during the execution of the next
@@ -174,8 +174,9 @@ public:
      * @param set Set number of the resources to be bound
      * @param resources Array of the resources that should be bound as a single
      * ResourceSet
+     * @return Reference to this Job
      */
-    void useResources(size_t set, const std::vector<Resource *> &resources);
+    Job& useResources(size_t set, const std::vector<Resource *> &resources);
 
     /**
      * @brief Copy data from the host to the device.
@@ -193,8 +194,9 @@ public:
      * @param data Source for the copy command, allocated on the host. Could be set to
      * nullptr to prepare image layout
      * @param size Amount of bytes to copy
+     * @return Reference to this Job
      */
-    void syncResourceToDevice(Resource &resource, const void *data, size_t size = UINT64_MAX);
+    Job& syncResourceToDevice(Resource &resource, const void *data, size_t size = UINT64_MAX);
 
     /**
      * @brief Copy data from the device to the host.
@@ -208,8 +210,9 @@ public:
      * @param resource Resource that will be a source for this copy operation
      * @param data Destination for the copy command, allocated on the host
      * @param size Amount of bytes to copy
+     * @return Reference to this Job
      */
-    void syncResourceToHost(Resource &resource, void *data, size_t size = UINT64_MAX);
+    Job& syncResourceToHost(Resource &resource, void *data, size_t size = UINT64_MAX);
 
     /**
      * @brief Copy data from one resource to another.
@@ -218,8 +221,9 @@ public:
      * 
      * @param src Source for copy operation
      * @param dst Destination for copy operation
+     * @return Reference to this Job
      */
-    void syncResources(Resource &src, Resource &dst);
+    Job& syncResources(Resource &src, Resource &dst);
 
     /**
      * @brief Push constants that should be used by the next added task.
@@ -229,8 +233,9 @@ public:
      * 
      * @param data Location of the data that should be pushed to the device
      * @param size Size of the data
+     * @return Reference to this Job
      */
-    void pushConstants(const void *data, size_t size);
+    Job& pushConstants(const void *data, size_t size);
 
     /**
      * @brief Push constants that should be used by the next added task.
@@ -240,9 +245,10 @@ public:
      * 
      * @tparam T Data type
      * @param data Data that should be pushed to the device
+     * @return Reference to this Job
      */
     template <typename T>
-    void pushConstants(const T &data);
+    Job& pushConstants(const T &data);
 
     /**
      * @brief Wait until tasks are completed.
@@ -299,7 +305,10 @@ public:
      * @return Empty Semaphore object if \p signal is false, otherwise - Sempahore
      * object that signals when the job is completed.
      */
-    Semaphore submit(bool signal = false);
+    Semaphore submit(bool signal);
+
+    // TODO
+    Job& submit();
 
     /**
      * @brief Wait for the GPU to finish operations sumbitted by this job.
@@ -360,7 +369,7 @@ public:
 private:
     void bindPendingResources(const Task &);
 
-    void checkDataDependencyInPendingBindings();
+    void checkDataDependencyInPendingBindings(const Task& task);
 
     void checkDataDependency(const std::vector<Resource *> &requiredResources,
         Operation accessStage, AccessTypeFlags accessType);
@@ -382,9 +391,11 @@ private:
 };
 
 template <typename T>
-void Job::pushConstants(const T &data)
+Job& Job::pushConstants(const T &data)
 {
     pushConstants(&data, sizeof(data));
+
+    return *this;
 }
 
 #endif // JOB_H

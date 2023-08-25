@@ -25,8 +25,7 @@ int main()
     printArray("Array 2", data2);
 
     JobManager manager;
-    Task task = manager.createTask("../examples/shaders/sum.spv",
-        {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }});
+    Task task = manager.createTask("../examples/shaders/sum.spv");
     Buffer buffer1 = manager.createBuffer(dataSize);
     Buffer buffer2 = manager.createBuffer(dataSize);
     ResourceSet resourceSet = manager.createResourceSet({ &buffer1, &buffer2 });

@@ -16,14 +16,14 @@ int main()
     std::cout << std::endl;
 
     JobManager manager;
-    Task task = manager.createTask("../examples/shaders/fibonacci.spv", {{ ResourceType::StorageBuffer }}, 0, arraySize);
+    Task task = manager.createTask("../examples/shaders/fibonacci.spv", arraySize);
     Buffer buffer = manager.createBuffer(dataSize);
     Job job = manager.createJob();
 
     // record commands
-    job.syncResourceToDevice(buffer, data, dataSize);
+    job.syncResourceToDevice(buffer, data);
     job.addTask(task, {{ &buffer }}, arraySize);
-    job.syncResourceToHost(buffer, data, dataSize);
+    job.syncResourceToHost(buffer, data);
     // submit and wait until done
     job.submit();
     job.await();

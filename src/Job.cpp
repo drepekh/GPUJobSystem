@@ -1,7 +1,6 @@
 #include "Job.h"
 
 #include "JobManager.h"
-#include "Resources.h"
 
 Job::Job(JobManager *manager, VkCommandBuffer commandBuffer, VkQueue computeQueue, VkFence fence) :
     manager(manager),
@@ -28,17 +27,19 @@ void Job::setAutoDataDependencyManagement(bool value)
     autoDataDependencyManagement = value;
 }
 
-void Job::addTask(const Task &task, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
+Job& Job::addTask(const Task &task, uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
-    checkDataDependencyInPendingBindings();
+    checkDataDependencyInPendingBindings(task);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, task.getPipeline());
     bindPendingResources(task);
 
     vkCmdDispatch(commandBuffer, groupX, groupY, groupZ);
+
+    return *this;
 }
 
-void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
+Job& Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
     for (size_t i = 0; i < resources.size(); ++i)
@@ -46,10 +47,10 @@ void Job::addTask(const Task &task, const std::vector<std::vector<Resource *>> &
         useResources(i, resources.at(i));
     }
 
-    addTask(task, groupX, groupY, groupZ);
+    return addTask(task, groupX, groupY, groupZ);
 }
 
-void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
+Job& Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
     uint32_t groupX, uint32_t groupY, uint32_t groupZ)
 {
     for (size_t i = 0; i < resources.size(); ++i)
@@ -57,20 +58,24 @@ void Job::addTask(const Task &task, const std::vector<ResourceSet> &resources,
         useResources(i, resources.at(i));
     }
 
-    addTask(task, groupX, groupY, groupZ);
+    return addTask(task, groupX, groupY, groupZ);
 }
 
-void Job::useResources(size_t index, const ResourceSet &resources)
+Job& Job::useResources(size_t index, const ResourceSet &resources)
 {
     pendingBindings.insert_or_assign(index, resources);
+
+    return *this;
 }
 
-void Job::useResources(size_t index, const std::vector<Resource *> &resources)
+Job& Job::useResources(size_t index, const std::vector<Resource *> &resources)
 {
     pendingBindings.insert_or_assign(index, resources);
+
+    return *this;
 }
 
-void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size)
+Job& Job::syncResourceToDevice(Resource &resource, const void *data, size_t size)
 {
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
@@ -102,7 +107,7 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         if (data == nullptr)
         {
             transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
-            return;
+            return *this;
         }
 
         if (size != imageSize)
@@ -114,9 +119,11 @@ void Job::syncResourceToDevice(Resource &resource, const void *data, size_t size
         manager->copyBufferToImage(commandBuffer, image.getStagingBuffer()->getBuffer(), image.getImage(), image.getWidth(), image.getHeight());
         transitionImageLayout(image, VK_IMAGE_LAYOUT_GENERAL);
     }
+
+    return *this;
 }
 
-void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
+Job& Job::syncResourceToHost(Resource &resource, void *data, size_t size)
 {
     if (resource.getResourceType() == ResourceType::StorageBuffer)
     {
@@ -151,9 +158,11 @@ void Job::syncResourceToHost(Resource &resource, void *data, size_t size)
 
         postExecutionTransfers.push_back({ image.getStagingBuffer(), imageSize, data });
     }
+
+    return *this;
 }
 
-void Job::syncResources(Resource &src, Resource &dst)
+Job& Job::syncResources(Resource &src, Resource &dst)
 {
     if (src.getResourceType() == ResourceType::StorageImage && dst.getResourceType() == ResourceType::StorageImage)
     {
@@ -182,13 +191,17 @@ void Job::syncResources(Resource &src, Resource &dst)
     {
         throw std::runtime_error("Unsupported sync between resources");
     }
+
+    return *this;
 }
 
-void Job::pushConstants(const void *data, size_t size)
+Job& Job::pushConstants(const void *data, size_t size)
 {
     std::shared_ptr<void> dst{ new char[size] };
     std::memcpy(dst.get(), data, size);
     pendingConstants = { dst, static_cast<uint32_t>(size) };
+
+    return *this;
 }
 
 void Job::waitForTasksFinish()
@@ -274,6 +287,13 @@ Semaphore Job::submit(bool signal)
     }
 
     return { signal ? signalSemaphore : VK_NULL_HANDLE };
+}
+
+Job& Job::submit()
+{
+    submit(false);
+
+    return *this;
 }
 
 bool Job::await(uint64_t timeout)
@@ -412,21 +432,28 @@ void Job::transitionImageLayout(Image &image, VkImageLayout newLayout)
     image.setLayout(newLayout);
 }
 
-void Job::checkDataDependencyInPendingBindings()
+void Job::checkDataDependencyInPendingBindings(const Task& task)
 {
     if (!autoDataDependencyManagement)
         return;
 
+    const auto& accessFlags = task.getResourceAccessFlags();
     std::vector<Resource *> allResources;
+    std::vector<AccessTypeFlags> allAccessFlags;
     for (const auto &[pos, resources] : pendingBindings)
     {
         const auto &rs = std::holds_alternative<ResourceSet>(resources) ?
             std::get<ResourceSet>(resources).getResources() :
             std::get<std::vector<Resource *>>(resources);
+        
+        if (pos >= accessFlags.size() || rs.size() > accessFlags[pos].size())
+            throw std::runtime_error("Binded resources does not match shader layout");
+        
         allResources.insert(allResources.end(), rs.begin(), rs.end());
+        allAccessFlags.insert(allAccessFlags.end(), accessFlags[pos].begin(), accessFlags[pos].begin() + rs.size());
     }
 
-    checkDataDependency(allResources, Operation::Task, AccessType::Read | AccessType::Write);
+    checkDataDependency(allResources, Operation::Task, allAccessFlags);
 }
 
 void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
@@ -465,7 +492,7 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
         }
     }
 
-    for (const auto &[resource, accessType] : uniqueResources)
+    for (const auto &[resource, accessTypeFlags] : uniqueResources)
     {
         auto it = unguardedResourceAccess.find(resource);
         if (it != unguardedResourceAccess.end())
@@ -473,7 +500,10 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
             const auto &info = it->second;
 
             // two read operations do not require synchronization
-            if (info.accessType == AccessType::Read && accessType == AccessType::Read)
+            if (info.accessType == AccessType::Read && accessTypeFlags == AccessType::Read)
+                continue;
+
+            if (info.accessType == AccessType::None || accessTypeFlags == AccessType::None)
                 continue;
 
             if (it->first->getResourceType() == ResourceType::StorageBuffer)
@@ -481,7 +511,7 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
                 const auto* buffer = static_cast<const Buffer *>(it->first);
 
                 auto [srcStage, srcAccessMask] = mapStageAndAccessMask(info.accessStage, info.accessType);
-                auto [dstStage, dstAccessMask] = mapStageAndAccessMask(accessStage, accessType);
+                auto [dstStage, dstAccessMask] = mapStageAndAccessMask(accessStage, accessTypeFlags);
                 
                 if (info.accessStage == Operation::Task)
                 {
@@ -505,7 +535,7 @@ void Job::checkDataDependency(const std::vector<Resource *> &requiredResources,
             }
         }
 
-        unguardedResourceAccess.insert_or_assign(resource, ResourceAccesInfo{ accessType, accessStage });
+        unguardedResourceAccess.insert_or_assign(resource, ResourceAccesInfo{ accessTypeFlags, accessStage });
     }
 
     auto dstStage = mapStage(accessStage);

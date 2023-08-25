@@ -106,8 +106,7 @@ TEST_CASE("Job execute tests", "[Job]")
         constexpr size_t count = 5;
         constexpr size_t dataSize = count * sizeof(uint32_t);
         Buffer buffer = manager.createBuffer(dataSize);
-        Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-            {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
+        Task task = manager.createTask("../examples/shaders/fibonacci.spv", (uint32_t)count);
         ResourceSet set;
         
         uint32_t data[count] = {1, 2, 3, 4, 5};
@@ -155,20 +154,34 @@ TEST_CASE("Job execute tests", "[Job]")
     {
         constexpr size_t count = 5;
         constexpr size_t dataSize = count * sizeof(uint32_t);
-        Buffer buffer = manager.createBuffer(dataSize);
-        Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-            {{ ResourceType::StorageBuffer }}, 0, (uint32_t)count);
+        Buffer buffer1 = manager.createBuffer(dataSize);
+        Buffer buffer2 = manager.createBuffer(dataSize);
+        Task task = manager.createTask("../examples/shaders/sum.spv", (uint32_t)count);
         
-        uint32_t inData[count] = {1, 2, 3, 4, 5};
+        uint32_t inData1[count] = {1, 2, 3, 4, 5};
+        uint32_t inData2[count] = {10, 20, 30, 40, 50};
         uint32_t outData[count];
-        uint32_t expectedData[count] = {1, 1, 2, 3, 5};
+        uint32_t expectedData[count] = {10, 20, 30, 40, 50};
 
-        job.syncResourceToDevice(buffer, inData, dataSize);
-        job.addTask(task, {{ &buffer }}, count);
-        job.syncResourceToHost(buffer, outData, dataSize);
+        Job transferJob = manager.createJob();
+        transferJob.syncResourceToDevice(buffer2, inData2)
+            .submit()
+            .await();
+        REQUIRE(transferJob.isComplete());
 
-        for (size_t i = 0; i < 5; ++i)
+        job.syncResourceToDevice(buffer1, inData1)
+            .addTask(task, {{ &buffer1, &buffer2 }}, count)
+            .syncResourceToHost(buffer2, outData);
+
+        constexpr size_t iterations = 5;
+        for (size_t i = 0; i < iterations; ++i)
         {
+            for (size_t n = 0; n < count; ++n)
+            {
+                inData1[n] += 1;
+                expectedData[n] += inData1[n];
+            }
+
             std::fill(outData, outData + count, 0);
             job.submit();
             REQUIRE(job.await());
@@ -181,8 +194,7 @@ TEST_CASE("Job execute tests", "[Job]")
     {
         constexpr size_t count = 5;
         constexpr size_t dataSize = count * sizeof(uint32_t);
-        Task task = manager.createTask("../examples/shaders/sum.spv",
-            {{ ResourceType::StorageBuffer, ResourceType::StorageBuffer }});
+        Task task = manager.createTask("../examples/shaders/sum.spv");
 
         Buffer buffer1 = manager.createBuffer(dataSize);
         Buffer buffer2 = manager.createBuffer(dataSize);

@@ -15,6 +15,10 @@
 #include <set>
 #include <functional>
 
+namespace spv_reflect
+{
+    class ShaderModule;
+}
 
 template<typename T>
 constexpr size_t argsSize()
@@ -98,6 +102,16 @@ private:
         }
     };
 
+    struct ShaderModule
+    {
+        VkShaderModule vkModule;
+        std::shared_ptr<spv_reflect::ShaderModule> reflectModule;
+
+        std::vector<std::vector<ResourceType>> layouts;
+        std::vector<std::vector<AccessTypeFlags>> resourceAccessFlags;
+        size_t pushConstantSize = 0;
+    };
+
     VkInstance instance;
     VkDebugUtilsMessengerEXT debugMessenger;
     VkPhysicalDevice physicalDevice;
@@ -111,7 +125,7 @@ private:
     std::vector<VkPipelineLayout> pipelineLayouts;
     std::vector<VkPipeline> pipelines;
 
-    std::map<std::string, VkShaderModule> shaderModules;
+    std::map<std::string, ShaderModule> shaderModules;
 
     // allocated resources
     std::vector<VkBuffer> buffers;
@@ -171,34 +185,26 @@ public:
     /**
      * @brief Create a Task object
      * 
-     * Create Task using provided shader and layout of resources used by the shader.
-     * Layout should match that of shader.
+     * Create Task using provided shader.
      * 
      * @param shaderPath Path to the already compiled SPIR-V shader
-     * @param layout Expected layout of the shader. Interpreted as a list of sets
-     * @param pushConstantSize Size of the structure that represents push constants
      * @return Created Task
      */
-    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-        uint32_t pushConstantSize = 0);
+    Task createTask(const std::string &shaderPath);
 
     /**
      * @brief Create a Task object
      * 
-     * Create Task using provided shader and layout of resources used by the shader.
-     * Layout should match that of shader. Additionally makes use of provided
+     * Create Task using provided shader. Additionally makes use of provided
      * specialization constants.
      * 
      * @tparam Args Typenames of the specialized constants
      * @param shaderPath Path to the already compiled SPIR-V shader
-     * @param layout Expected layout of the shader. Interpreted as a list of sets
-     * @param pushConstantSize Size of the structure that represents push constants
      * @param specializationConstants Specialization constants to be used in the shader
      * @return Created Task
      */
     template<typename... Args>
-    Task createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-        uint32_t pushConstantSize, Args&&... specializationConstants)
+    Task createTask(const std::string &shaderPath, Args&&... specializationConstants)
     {
         VkSpecializationMapEntry specializationMapEntries[sizeof...(Args)];
         constexpr size_t dataSize = argsSize<Args...>();
@@ -211,7 +217,7 @@ public:
         specializationInfo.dataSize = static_cast<uint32_t>(dataSize);
         specializationInfo.pData = buffer;
 
-        return _createTask(shaderPath, layout, pushConstantSize, &specializationInfo);
+        return _createTask(shaderPath, &specializationInfo);
     }
 
     /**
@@ -316,7 +322,7 @@ private:
 
     VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts,
         uint32_t pushConstantSize);
-    VkPipeline createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout,
+    VkPipeline createComputePipeline(VkShaderModule vkModule, VkPipelineLayout pipelineLayout,
         VkSpecializationInfo *specializationInfo);
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
@@ -351,7 +357,9 @@ private:
     VkFence createFence();
     VkSemaphore createSemaphore();
 
-    VkShaderModule createShaderModule(const std::vector<char>& code);
+    VkShaderModule createVkShaderModule(const std::vector<char>& code);
+
+    ShaderModule& getShaderModule(const std::string& shaderPath);
 
     static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
         const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger);
@@ -362,8 +370,13 @@ private:
 
     static std::vector<char> readFile(const std::string &filename, bool binaryMode = false);
 
-    Task _createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-        uint32_t pushConstantSize, VkSpecializationInfo *specializationInfo = nullptr);
+
+    Task _createTask(const std::string &shaderPath, VkSpecializationInfo *specializationInfo = nullptr);
+
+    void reflectDescriptorSets(spv_reflect::ShaderModule* reflectModule,
+        std::vector<std::vector<ResourceType>>& outLayout,
+        std::vector<std::vector<AccessTypeFlags>>& outResourceAccessFlags);
+    uint32_t reflectPushConstantSize(spv_reflect::ShaderModule* reflectModule);
 };
 
 #endif // JOB_MANAGER_H

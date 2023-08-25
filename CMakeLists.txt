@@ -8,13 +8,15 @@ include_directories($ENV{VULKAN_SDK}/include)
 
 # library
 set(CommonSrc src/Job.cpp
-              src/JobManager.cpp)
+              src/JobManager.cpp
+              3rd_party/SPIRV-Reflect/spirv_reflect.cpp)
 
 add_library(GPUJobSystem ${CommonSrc})
+target_include_directories(GPUJobSystem PRIVATE 3rd_party/SPIRV-Reflect)
 target_link_libraries(GPUJobSystem $ENV{VULKAN_SDK}/Lib/vulkan-1.lib)
 
 
-# examples
+# shaders
 set(Shaders fibonacci
             sum
             edgedetect)
@@ -30,6 +32,7 @@ foreach(shader ${Shaders})
 endforeach(shader ${Shader})
 
 
+# examples
 set(Examples simple_task
              multiple_invokations
              img_kernel)
@@ -41,3 +44,14 @@ foreach(examplename ${Examples})
     target_link_libraries(${examplename} GPUJobSystem)
 endforeach(examplename ${Examples})
 
+
+# tests
+set(TestSrc tests/JobManagerTest.cpp
+            tests/JobTest.cpp)
+
+add_executable(Tests  ${TestSrc})
+target_include_directories(Tests PUBLIC 3rd_party/stb
+                                 PUBLIC 3rd_party/catch
+                                 PUBLIC src
+                                 PUBLIC tests)
+target_link_libraries(Tests GPUJobSystem)

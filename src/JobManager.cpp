@@ -1,4 +1,7 @@
 #include "JobManager.h"
+#include <spirv_reflect.h>
+
+#include <cassert>
 
 JobManager::JobManager(const std::vector<std::string> extensions) :
     manageInstance(true),
@@ -20,10 +23,9 @@ JobManager::~JobManager()
     cleanupVulkan();
 }
 
-Task JobManager::createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-    uint32_t pushConstantSize)
+Task JobManager::createTask(const std::string &shaderPath)
 {
-    return _createTask(shaderPath, layout, pushConstantSize);
+    return _createTask(shaderPath);
 }
 
 Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
@@ -172,8 +174,10 @@ void JobManager::cleanupVulkan()
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyCommandPool(device, commandPool, nullptr);
 
-    for (auto shaderModule : shaderModules)
-        vkDestroyShaderModule(device, shaderModule.second, nullptr);
+    for (const auto& [key, shaderModule] : shaderModules)
+        vkDestroyShaderModule(device, shaderModule.vkModule, nullptr);
+    
+    shaderModules.clear();
 
     if (manageInstance)
     {
@@ -235,7 +239,7 @@ void JobManager::createInstance()
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = VK_API_VERSION_1_1;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -517,26 +521,13 @@ VkPipelineLayout JobManager::createPipelineLayout(const std::vector<VkDescriptor
     return pipelineLayout;
 }
 
-VkPipeline JobManager::createComputePipeline(const std::string &shaderPath, VkPipelineLayout pipelineLayout,
+VkPipeline JobManager::createComputePipeline(VkShaderModule vkModule, VkPipelineLayout pipelineLayout,
     VkSpecializationInfo *specializationInfo)
 {
-    VkShaderModule shaderModule;
-    auto it = shaderModules.find(shaderPath);
-    if (it != shaderModules.end())
-    {
-        shaderModule = it->second;
-    }
-    else
-    {
-        auto shaderCode = readFile(shaderPath, true);
-        shaderModule = createShaderModule(shaderCode);
-        shaderModules.insert({ shaderPath, shaderModule });
-    }
-
     VkPipelineShaderStageCreateInfo shaderStage = {};
     shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    shaderStage.module = shaderModule;
+    shaderStage.module = vkModule;
     shaderStage.pName = "main";
     shaderStage.pSpecializationInfo = specializationInfo;
 
@@ -1002,7 +993,7 @@ VkSemaphore JobManager::createSemaphore()
     return semaphore;
 }
 
-VkShaderModule JobManager::createShaderModule(const std::vector<char>& code)
+VkShaderModule JobManager::createVkShaderModule(const std::vector<char>& code)
 {
     VkShaderModuleCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -1016,6 +1007,27 @@ VkShaderModule JobManager::createShaderModule(const std::vector<char>& code)
     }
 
     return shaderModule;
+}
+
+JobManager::ShaderModule& JobManager::getShaderModule(const std::string& shaderPath)
+{
+    auto it = shaderModules.find(shaderPath);
+    if (it != shaderModules.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        auto shaderCode = readFile(shaderPath, true);
+        ShaderModule shaderModule;
+        shaderModule.vkModule = createVkShaderModule(shaderCode);
+        shaderModule.reflectModule = std::make_shared<spv_reflect::ShaderModule>(shaderCode.size(), shaderCode.data());
+        reflectDescriptorSets(shaderModule.reflectModule.get(), shaderModule.layouts, shaderModule.resourceAccessFlags);
+        shaderModule.pushConstantSize = reflectPushConstantSize(shaderModule.reflectModule.get());
+
+        auto result = shaderModules.insert({ shaderPath, shaderModule });
+        return result.first->second;
+    }
 }
 
 VkResult JobManager::CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
@@ -1074,20 +1086,83 @@ std::vector<char> JobManager::readFile(const std::string &filename, bool binaryM
     return data;
 }
 
-Task JobManager::_createTask(const std::string &shaderPath, const std::vector<std::vector<ResourceType>> &layout,
-    uint32_t pushConstantSize, VkSpecializationInfo *specializationInfo)
+Task JobManager::_createTask(const std::string &shaderPath, VkSpecializationInfo *specializationInfo)
 {
+    ShaderModule& shaderModule = getShaderModule(shaderPath);
+
     std::vector<VkDescriptorSetLayout> layouts;
-    for (const auto &descriptorSetLayoutTypes: layout)
+    for (const auto &descriptorSetLayoutTypes: shaderModule.layouts)
     {
         layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
         descriptorSetLayouts.push_back(layouts.back());
     }
-    auto pipelineLayout = createPipelineLayout(layouts, pushConstantSize);
+    auto pipelineLayout = createPipelineLayout(layouts, shaderModule.pushConstantSize);
     pipelineLayouts.push_back(pipelineLayout);
 
-    auto pipeline = createComputePipeline(shaderPath, pipelineLayout, specializationInfo);
+    auto pipeline = createComputePipeline(shaderModule.vkModule, pipelineLayout, specializationInfo);
     pipelines.push_back(pipeline);
 
-    return { pipeline, pipelineLayout, layouts };
+    return { pipeline, pipelineLayout, layouts, shaderModule.resourceAccessFlags };
+}
+
+ResourceType reflectDescriptorTypeToResourceType(SpvReflectDescriptorType type)
+{
+    switch(type)
+    {
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            return ResourceType::StorageBuffer;
+        case SPV_REFLECT_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            return ResourceType::StorageImage;
+        default:
+            throw std::runtime_error("Unsupported descriptor type: " + std::to_string(type));
+    }
+}
+
+void JobManager::reflectDescriptorSets(spv_reflect::ShaderModule* reflectModule,
+    std::vector<std::vector<ResourceType>>& outLayout,
+    std::vector<std::vector<AccessTypeFlags>>& outResourceAccessFlags)
+{
+    outLayout.clear();
+    outResourceAccessFlags.clear();
+
+    uint32_t count;
+    SpvReflectResult result = reflectModule->EnumerateDescriptorSets(&count, nullptr);
+    assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+    std::vector<SpvReflectDescriptorSet*> sets(count);
+    result = reflectModule->EnumerateDescriptorSets(&count, sets.data());
+    assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+    outLayout.resize(sets.size());
+    outResourceAccessFlags.resize(sets.size());
+    for (size_t i = 0; i < sets.size(); ++i)
+    {
+        for (size_t j = 0; j < sets[i]->binding_count; ++j)
+        {
+            outLayout[i].push_back(reflectDescriptorTypeToResourceType(sets[i]->bindings[j]->descriptor_type));
+            outResourceAccessFlags[i].push_back((sets[i]->bindings[j]->block.flags & SPV_REFLECT_VARIABLE_FLAGS_UNUSED)
+                ? AccessType::None
+                : ((sets[i]->bindings[j]->block.decoration_flags & SPV_REFLECT_DECORATION_NON_WRITABLE)
+                    ? AccessType::Read
+                    : AccessType:: Read | AccessType::Write));
+        }
+    }
+}
+
+uint32_t JobManager::reflectPushConstantSize(spv_reflect::ShaderModule* reflectModule)
+{
+    uint32_t count;
+    SpvReflectResult result = reflectModule->EnumeratePushConstantBlocks(&count, nullptr);
+    assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    std::vector<SpvReflectBlockVariable*> blocks(count);
+    result = reflectModule->EnumeratePushConstantBlocks(&count, blocks.data());
+    assert(result == SPV_REFLECT_RESULT_SUCCESS);
+
+    return blocks[0]->size;
 }

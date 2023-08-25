@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include <vector>
+#include <memory>
 
 class JobManager;
 
@@ -11,6 +12,13 @@ enum class ResourceType {
     StorageBuffer,
     StorageImage
 };
+
+enum AccessType : uint8_t {
+    None = 0,
+    Read = 1,
+    Write = 2
+};
+using AccessTypeFlags = uint8_t;
 
 class Resource
 {
@@ -217,13 +225,15 @@ class Task
     VkPipeline pipeline;
     VkPipelineLayout pipelineLayout;
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
+    std::vector<std::vector<AccessTypeFlags>> resourceAccessFlags; 
 
 public:
 
-    Task(VkPipeline pipeline, VkPipelineLayout pipelineLayout, const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts) :
+    Task(VkPipeline pipeline, VkPipelineLayout pipelineLayout, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<std::vector<AccessTypeFlags>>& resourceAccessFlags) :
         pipeline(pipeline),
         pipelineLayout(pipelineLayout),
-        descriptorSetLayouts(descriptorSetLayouts)
+        descriptorSetLayouts(descriptorSetLayouts),
+        resourceAccessFlags(resourceAccessFlags)
     {}
 
     VkPipeline getPipeline() const
@@ -244,6 +254,11 @@ public:
     size_t getDescriptorSetLayoutsCount() const
     {
         return descriptorSetLayouts.size();
+    }
+
+    const std::vector<std::vector<AccessTypeFlags>>& getResourceAccessFlags() const
+    {
+        return resourceAccessFlags;
     }
 };
 

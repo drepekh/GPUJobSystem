@@ -63,14 +63,12 @@ TEST_CASE("JobManager resource creation", "[JobManager]")
     {
         SECTION("without specialized constants")
         {
-            Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-                {{ ResourceType::StorageBuffer }});
+            Task task = manager.createTask("../examples/shaders/fibonacci.spv");
         }
 
         SECTION("With specialized constants")
         {
-            Task task = manager.createTask("../examples/shaders/fibonacci.spv",
-                {{ ResourceType::StorageBuffer }}, 0, 20);
+            Task task = manager.createTask("../examples/shaders/fibonacci.spv", 20);
         }
     }
 
