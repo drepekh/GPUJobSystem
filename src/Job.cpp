@@ -204,7 +204,7 @@ Job& Job::pushConstants(const void *data, size_t size)
     return *this;
 }
 
-void Job::waitForTasksFinish()
+Job& Job::waitForTasksFinish()
 {
     unguardedResourceAccess.clear();
     addMemoryBarrier(
@@ -212,24 +212,30 @@ void Job::waitForTasksFinish()
         VK_ACCESS_SHADER_WRITE_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_READ_BIT);
+
+    return *this;
 }
 
-void Job::waitAfterTransfers()
+Job& Job::waitAfterTransfers()
 {
     addMemoryBarrier(
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_TRANSFER_WRITE_BIT /*| VK_ACCESS_TRANSFER_READ_BIT*/,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+
+    return *this;
 }
 
-void Job::waitBeforeTransfers()
+Job& Job::waitBeforeTransfers()
 {
     addMemoryBarrier(
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_WRITE_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_TRANSFER_READ_BIT);
+
+    return *this;
 }
 
 void Job::addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
@@ -261,6 +267,11 @@ Semaphore Job::submit(bool signal)
         isRecorded = true;
     }
 
+    if (isSubmitted)
+    {
+        throw std::runtime_error("Tried to submit job again without awaiting for its completion");
+    }
+
     completePreExecutionTransfers();
 
     VkSubmitInfo submitInfo{};
@@ -286,6 +297,8 @@ Semaphore Job::submit(bool signal)
         throw std::runtime_error("Failed to submit draw command buffer!");
     }
 
+    isSubmitted = true;
+
     return { signal ? signalSemaphore : VK_NULL_HANDLE };
 }
 
@@ -305,7 +318,10 @@ bool Job::await(uint64_t timeout)
     }
 
     if (res == VK_SUCCESS)
+    {
         completePostExecutionTransfers();
+        isSubmitted = false;
+    }
     
     return res == VK_SUCCESS;
 }
@@ -327,12 +343,12 @@ void Job::completePostExecutionTransfers()
         const auto& transferInfo = postExecutionTransfers[i];
 
         if (transferInfo.hostBuffer != nullptr)
-            manager->copyDataFromHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory());
+            manager->copyDataFromHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory(), transferInfo.deviceBuffer->getMemoryOffset());
 
         if (transferInfo.destroyAfterTransfer)
         {
             vkDestroyBuffer(manager->device, transferInfo.deviceBuffer->getBuffer(), nullptr);
-            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr);
+            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr); // TODO use allocator
             delete transferInfo.deviceBuffer;
             
             postExecutionTransfers.erase(postExecutionTransfers.begin() + i);
@@ -348,12 +364,12 @@ void Job::completePreExecutionTransfers()
         const auto& transferInfo = preExecutionTransfers[i];
 
         if (transferInfo.hostBuffer != nullptr)
-            manager->copyDataToHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory());
+            manager->copyDataToHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory(), transferInfo.deviceBuffer->getMemoryOffset());
 
         if (transferInfo.destroyAfterTransfer)
         {
             vkDestroyBuffer(manager->device, transferInfo.deviceBuffer->getBuffer(), nullptr);
-            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr);
+            vkFreeMemory(manager->device, transferInfo.deviceBuffer->getMemory(), nullptr); // TODO use allocator
             delete transferInfo.deviceBuffer;
             
             preExecutionTransfers.erase(preExecutionTransfers.begin() + i);

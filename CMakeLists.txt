@@ -12,7 +12,8 @@ set(CommonSrc src/Job.cpp
               3rd_party/SPIRV-Reflect/spirv_reflect.cpp)
 
 add_library(GPUJobSystem ${CommonSrc})
-target_include_directories(GPUJobSystem PRIVATE 3rd_party/SPIRV-Reflect)
+target_include_directories(GPUJobSystem PRIVATE 3rd_party/SPIRV-Reflect
+                                        PRIVATE 3rd_party/vma)
 target_link_libraries(GPUJobSystem $ENV{VULKAN_SDK}/Lib/vulkan-1.lib)
 
 

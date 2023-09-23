@@ -38,6 +38,7 @@ class Job
     VkSemaphore signalSemaphore;
 
     bool isRecorded = false;
+    bool isSubmitted = false;
     bool autoDataDependencyManagement = true;
 
     std::map<size_t, std::variant<ResourceSet, std::vector<Resource *>>> pendingBindings;
@@ -258,7 +259,7 @@ public:
      * Usuful in cases when result (data) of one task should be used by
      * another task.
      */
-    void waitForTasksFinish();
+    Job& waitForTasksFinish();
 
     /**
      * @brief Wait until resource transfers are complete.
@@ -268,7 +269,7 @@ public:
      * after call to this function.
      * 
      */
-    void waitAfterTransfers();
+    Job& waitAfterTransfers();
 
     /**
      * @brief Wait until tasks finish writing resources before they can be
@@ -279,7 +280,7 @@ public:
      * finish write operations on the resources and valid data is transfered.
      * 
      */
-    void waitBeforeTransfers();
+    Job& waitBeforeTransfers();
 
     /**
      * @brief Record memory berrier.
@@ -348,9 +349,11 @@ public:
     /**
      * @brief Complete transfers from device to host.
      * 
-     * Should be called in cases when commands were submitted from outside Job
-     * class (meaning submit() was not called) and only after all submited work
-     * is done.
+     * Usually Job automatically takes care of this by calling this function
+     * from inside the await(), but you might want to call it manually when
+     * integrating JobManager with the external pipeline where command buffer
+     * is submited outside of the Job class (i.e. submit() is never called).
+     * 
      */
     void completePostExecutionTransfers();
 

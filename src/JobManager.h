@@ -15,6 +15,10 @@
 #include <set>
 #include <functional>
 
+#define USE_VMA
+
+class DeviceMemoryAllocator;
+
 namespace spv_reflect
 {
     class ShaderModule;
@@ -53,7 +57,7 @@ void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint
 
 
 /**
- * @brief Various device limits related to compute shaders
+ * @brief Various device limits related to compute shaders.
  * 
  */
 struct DeviceComputeLimits
@@ -127,9 +131,10 @@ private:
 
     std::map<std::string, ShaderModule> shaderModules;
 
+    DeviceMemoryAllocator* allocator = nullptr;
     // allocated resources
     std::vector<VkBuffer> buffers;
-    std::vector<VkDeviceMemory> allocatedMemory;
+    std::vector<class AllocatedMemory> allocatedMemory;
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
 
@@ -162,7 +167,7 @@ public:
      * 
      * @param extensions List of the device extensions that should be ebanbled
      */
-    JobManager(const std::vector<std::string> extensions = {});
+    JobManager(const std::vector<std::string> extensions = {}, DeviceMemoryAllocator* memoryAllocator = nullptr);
 
     /**
      * @brief Construct a new Job Manager object
@@ -279,6 +284,13 @@ public:
     VkDevice getDevice();
 
     /**
+     * @brief Get the Device Memory Allocator object
+     * 
+     * @return DeviceMemoryAllocator* 
+     */
+    DeviceMemoryAllocator* getDeviceMemoryAllocator();
+
+    /**
      * @brief Get the Compute Limits object
      * 
      * Returns object with info about various compute limits of the currently used
@@ -326,11 +338,11 @@ private:
         VkSpecializationInfo *specializationInfo);
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
-        VkDeviceMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties = 0);
+        AllocatedMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties = 0);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
     void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-        VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+        VkMemoryPropertyFlags properties, VkImage& image, AllocatedMemory& imageMemory);
 
     void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 
@@ -341,8 +353,8 @@ private:
     void copyBufferToBuffer(VkCommandBuffer commandBuffer, VkBuffer src, VkBuffer dst, size_t size,
         size_t srcOffset = 0, size_t dstOffset = 0);
 
-    void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory);
-    void copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory);
+    void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset);
+    void copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset);
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties = 0);
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);

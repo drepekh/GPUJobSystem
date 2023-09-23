@@ -1,13 +1,28 @@
 #include "JobManager.h"
-#include <spirv_reflect.h>
 
+#include "DeviceMemoryAllocator.h"
+
+#include <spirv_reflect.h>
 #include <cassert>
 
-JobManager::JobManager(const std::vector<std::string> extensions) :
+#ifdef USE_VMA
+using DefaultMemoryAllocator = VMADeviceMemoryAllocator;
+#else
+using DefaultMemoryAllocator = DefaultDeviceMemoryAllocator;
+#endif
+
+JobManager::JobManager(const std::vector<std::string> extensions, DeviceMemoryAllocator* memoryAllocator) :
     manageInstance(true),
-    deviceExtensions(extensions)
+    deviceExtensions(extensions),
+    allocator(memoryAllocator)
 {
     initVulkan();
+
+    if (!allocator)
+    {
+        allocator = new DefaultMemoryAllocator;
+    }
+    allocator->initialize(this, physicalDevice, device, instance);
 }
 
 JobManager::JobManager(VkPhysicalDevice physicalDevice, VkDevice device) :
@@ -31,7 +46,7 @@ Task JobManager::createTask(const std::string &shaderPath)
 Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
 {
     VkBuffer buffer;
-    VkDeviceMemory bufferMemory;
+    AllocatedMemory bufferMemory;
     switch(type)
     {
     case Buffer::Type::DeviceLocal:
@@ -68,7 +83,7 @@ Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
     if (type == Buffer::Type::DeviceLocal)
     {
         VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
+        AllocatedMemory stagingBufferMemory;
         createBuffer(
             size,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
@@ -83,13 +98,13 @@ Buffer JobManager::createBuffer(size_t size, Buffer::Type type)
         allocatedMemory.push_back(stagingBufferMemory);
     }
 
-    return { buffer, bufferMemory, size, type, staging };
+    return Buffer{ buffer, bufferMemory, size, type, staging };
 }
 
 Image JobManager::createImage(size_t width, size_t height)
 {
     VkImage image;
-    VkDeviceMemory imageMemory;
+    AllocatedMemory imageMemory;
     createImage(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
         VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
@@ -102,7 +117,7 @@ Image JobManager::createImage(size_t width, size_t height)
     allocatedMemory.push_back(imageMemory);
 
     VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
+    AllocatedMemory stagingBufferMemory;
     size_t imageSize = width * height * 4;
     createBuffer(
         imageSize,
@@ -148,6 +163,11 @@ VkDevice JobManager::getDevice()
     return device;
 }
 
+DeviceMemoryAllocator* JobManager::getDeviceMemoryAllocator()
+{
+    return allocator;
+}
+
 DeviceComputeLimits JobManager::getComputeLimits()
 {
     return computeLimits;
@@ -170,6 +190,8 @@ void JobManager::initVulkan()
 void JobManager::cleanupVulkan()
 {
     cleanupResources();
+
+    allocator->deinitialize();
 
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyCommandPool(device, commandPool, nullptr);
@@ -210,7 +232,7 @@ void JobManager::cleanupResources()
     images.clear();
     
     for (auto memory: allocatedMemory)
-        vkFreeMemory(device, memory, nullptr);
+        allocator->FreeMemory(memory);
     allocatedMemory.clear();
 
     for (auto pipeline: pipelines)
@@ -547,7 +569,7 @@ VkPipeline JobManager::createComputePipeline(VkShaderModule vkModule, VkPipeline
 }
 
 void JobManager::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
-    VkDeviceMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties)
+    AllocatedMemory& bufferMemory, VkMemoryPropertyFlags optionalProperties)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -555,25 +577,7 @@ void JobManager::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
-    {
-        throw std::runtime_error("failed to create buffer!");
-    }
-
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, optionalProperties);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
-    {
-        throw std::runtime_error("failed to allocate buffer memory!");
-    }
-
-    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    bufferMemory = allocator->createBuffer(buffer, bufferInfo, properties, optionalProperties);
 }
 
 VkImageView JobManager::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
@@ -599,7 +603,7 @@ VkImageView JobManager::createImageView(VkImage image, VkFormat format, VkImageA
 }
 
 void JobManager::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-    VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+    VkMemoryPropertyFlags properties, VkImage& image, AllocatedMemory& imageMemory)
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -615,26 +619,8 @@ void JobManager::createImage(uint32_t width, uint32_t height, VkFormat format, V
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS)
-    {
-        throw std::runtime_error("failed to create image!");
-    }
-
-    VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, image, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS)
-    {
-        throw std::runtime_error("failed to allocate image memory!");
-    }
-
-    vkBindImageMemory(device, image, imageMemory, 0);
+    
+    imageMemory = allocator->createImage(image, imageInfo, properties);
 }
 
 void JobManager::transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout)
@@ -775,18 +761,18 @@ void JobManager::copyBufferToBuffer(VkCommandBuffer commandBuffer, VkBuffer src,
     vkCmdCopyBuffer(commandBuffer, src, dst, 1, &region);
 }
 
-void JobManager::copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory)
+void JobManager::copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset)
 {
     void* stagingData;
-    vkMapMemory(device, memory, 0, size, 0, &stagingData);
+    vkMapMemory(device, memory, memoryOffset, size, 0, &stagingData);
         memcpy(stagingData, data, size);
     vkUnmapMemory(device, memory);
 }
 
-void JobManager::copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory)
+void JobManager::copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset)
 {
     void* stagingData;
-    vkMapMemory(device, memory, 0, size, 0, &stagingData);
+    vkMapMemory(device, memory, memoryOffset, size, 0, &stagingData);
         memcpy(data, stagingData, size);
     vkUnmapMemory(device, memory);
 }
