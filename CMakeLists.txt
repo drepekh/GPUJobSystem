@@ -9,6 +9,7 @@ include_directories($ENV{VULKAN_SDK}/include)
 # library
 set(CommonSrc src/Job.cpp
               src/JobManager.cpp
+              src/DeviceMemoryAllocator.cpp
               3rd_party/SPIRV-Reflect/spirv_reflect.cpp)
 
 add_library(GPUJobSystem ${CommonSrc})

@@ -11,8 +11,8 @@ void printArray(std::string name, uint32_t *data)
 
 int main()
 {
-    uint32_t data1[arraySize];
-    uint32_t data2[arraySize];
+    std::vector<uint32_t> data1(arraySize);
+    std::vector<uint32_t> data2(arraySize);
     size_t dataSize = sizeof(uint32_t) * arraySize;
 
     std::cout << "Before:";
@@ -21,8 +21,8 @@ int main()
         data1[i] = i;
         data2[i] = i * 10;
     }
-    printArray("Array 1", data1);
-    printArray("Array 2", data2);
+    printArray("Array 1", data1.data());
+    printArray("Array 2", data2.data());
 
     JobManager manager;
     Task task = manager.createTask("../examples/shaders/sum.spv");
@@ -30,26 +30,26 @@ int main()
     Buffer buffer2 = manager.createBuffer(dataSize);
     ResourceSet resourceSet = manager.createResourceSet({ &buffer1, &buffer2 });
     ResourceSet resourceSet2 = manager.createResourceSet({ &buffer2, &buffer1 });
-    Job job = manager.createJob();
-
-    // copy data to device
-    job.syncResourceToDevice(buffer1, data1, dataSize);
-    job.syncResourceToDevice(buffer2, data2, dataSize);
-    // execute task
-    job.addTask(task, { resourceSet }, arraySize);
-    // wait until task finishes all write operations
-    job.waitForTasksFinish();
-    // execute task again with differently binded buffers
-    job.useResources(0, resourceSet2);
-    job.addTask(task, arraySize);
-    // copy data back to host
-    job.syncResourceToHost(buffer1, data1, dataSize);
-    job.syncResourceToHost(buffer2, data2, dataSize);
-    // submit and wait until done
-    job.submit();
-    job.await();
+    // Job job = manager.createJob();
+    manager.createJob()
+        // copy data to device
+        .syncResourceToDevice(buffer1, data1.data())
+        .syncResourceToDevice(buffer2, data2.data())
+        // execute task
+        .addTask(task, { resourceSet }, arraySize)
+        // wait until task finishes all write operations
+        .waitForTasksFinish()
+        // execute task again with differently binded buffers
+        .useResources(0, resourceSet2)
+        .addTask(task, arraySize)
+        // copy data back to host
+        .syncResourceToHost(buffer1, data1.data())
+        .syncResourceToHost(buffer2, data2.data())
+        // submit and wait until done
+        .submit()
+        .await();
 
     std::cout << "\nAfter:";
-    printArray("Array 1", data1);
-    printArray("Array 2", data2);
+    printArray("Array 1", data1.data());
+    printArray("Array 2", data2.data());
 }

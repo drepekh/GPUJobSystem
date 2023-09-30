@@ -8,7 +8,7 @@
 #ifdef USE_VMA
 using DefaultMemoryAllocator = VMADeviceMemoryAllocator;
 #else
-using DefaultMemoryAllocator = DefaultDeviceMemoryAllocator;
+using DefaultMemoryAllocator = SimpleDeviceMemoryAllocator;
 #endif
 
 JobManager::JobManager(const std::vector<std::string> extensions, DeviceMemoryAllocator* memoryAllocator) :
@@ -22,7 +22,10 @@ JobManager::JobManager(const std::vector<std::string> extensions, DeviceMemoryAl
     {
         allocator = new DefaultMemoryAllocator;
     }
-    allocator->initialize(this, physicalDevice, device, instance);
+    if (allocator->initialize(this, physicalDevice, device, instance) != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to initialize memory allocator");
+    }
 }
 
 JobManager::JobManager(VkPhysicalDevice physicalDevice, VkDevice device) :
@@ -219,6 +222,10 @@ void JobManager::cleanupResources()
         vkDestroyFence(device, fence, nullptr);
     fences.clear();
 
+    for (auto semaphore: semaphores)
+        vkDestroySemaphore(device, semaphore, nullptr);
+    semaphores.clear();
+
     for (auto buffer: buffers)
         vkDestroyBuffer(device, buffer, nullptr);
     buffers.clear();
@@ -232,7 +239,7 @@ void JobManager::cleanupResources()
     images.clear();
     
     for (auto memory: allocatedMemory)
-        allocator->FreeMemory(memory);
+        allocator->freeMemory(memory);
     allocatedMemory.clear();
 
     for (auto pipeline: pipelines)
@@ -440,6 +447,12 @@ void JobManager::createLogicalDevice()
 
 bool JobManager::isDeviceSuitable(VkPhysicalDevice device)
 {
+    VkPhysicalDeviceProperties deviceProperties;
+    vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+    if (VK_VERSION_MAJOR(deviceProperties.apiVersion) == 1 && VK_VERSION_MINOR(deviceProperties.apiVersion) < 1)
+        return false;
+
     QueueFamilyIndices indices = findQueueFamilies(device);
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);
@@ -620,7 +633,7 @@ void JobManager::createImage(uint32_t width, uint32_t height, VkFormat format, V
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     
-    imageMemory = allocator->createImage(image, imageInfo, properties);
+    imageMemory = allocator->createImage(image, imageInfo, properties, 0);
 }
 
 void JobManager::transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout)
@@ -761,20 +774,20 @@ void JobManager::copyBufferToBuffer(VkCommandBuffer commandBuffer, VkBuffer src,
     vkCmdCopyBuffer(commandBuffer, src, dst, 1, &region);
 }
 
-void JobManager::copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset)
+void JobManager::copyDataToHostVisibleMemory(const void *data, size_t size, const AllocatedMemory& memory)
 {
     void* stagingData;
-    vkMapMemory(device, memory, memoryOffset, size, 0, &stagingData);
+    allocator->mapMemory(memory, size, &stagingData);
         memcpy(stagingData, data, size);
-    vkUnmapMemory(device, memory);
+    allocator->unmapMemory(memory);
 }
 
-void JobManager::copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset)
+void JobManager::copyDataFromHostVisibleMemory(void *data, size_t size, const AllocatedMemory& memory)
 {
     void* stagingData;
-    vkMapMemory(device, memory, memoryOffset, size, 0, &stagingData);
+    allocator->mapMemory(memory, size, &stagingData);
         memcpy(data, stagingData, size);
-    vkUnmapMemory(device, memory);
+    allocator->unmapMemory(memory);
 }
 
 uint32_t JobManager::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
@@ -851,15 +864,15 @@ void JobManager::createDescriptorPool()
 {
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[0].descriptorCount = 128;
+    poolSizes[0].descriptorCount = 256;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[1].descriptorCount = 128;
+    poolSizes[1].descriptorCount = 256;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 128;
+    poolInfo.maxSets = 256;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
     {
@@ -976,6 +989,8 @@ VkSemaphore JobManager::createSemaphore()
         throw std::runtime_error("Failed to create semaphore");
     }
 
+    semaphores.push_back(semaphore);
+
     return semaphore;
 }
 
@@ -1082,7 +1097,7 @@ Task JobManager::_createTask(const std::string &shaderPath, VkSpecializationInfo
         layouts.push_back(createDescriptorSetLayout(descriptorSetLayoutTypes));
         descriptorSetLayouts.push_back(layouts.back());
     }
-    auto pipelineLayout = createPipelineLayout(layouts, shaderModule.pushConstantSize);
+    auto pipelineLayout = createPipelineLayout(layouts, static_cast<uint32_t>(shaderModule.pushConstantSize));
     pipelineLayouts.push_back(pipelineLayout);
 
     auto pipeline = createComputePipeline(shaderModule.vkModule, pipelineLayout, specializationInfo);

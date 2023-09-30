@@ -283,7 +283,7 @@ public:
     Job& waitBeforeTransfers();
 
     /**
-     * @brief Record memory berrier.
+     * @brief Record global memory berrier.
      * 
      * Records global memory barrier with specific source and destination
      * stages and masks.
@@ -292,9 +292,21 @@ public:
      * @param srcAccessMask Source access mask
      * @param dstStageMask Destination stage mask
      * @param dstAccessMask Destination access mask
+     * @return Reference to this Job;
      */
-    void addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
+    Job& addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
         VkPipelineStageFlags dstStageMask, VkAccessFlags dstAccessMask);
+    
+    /**
+     * @brief Record execution barrier.
+     * 
+     * Records execution barrier with specific source and destination stages.
+     * 
+     * @param srcStageMask Source stage mask
+     * @param dstStageMask Destination stage mask
+     * @return Reference to this Job;
+     */
+    Job& addExecutionBarrier(VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask);
 
     /**
      * @brief Submit job with all recorded operations to be executed on the GPU.
@@ -306,7 +318,7 @@ public:
      * @return Empty Semaphore object if \p signal is false, otherwise - Sempahore
      * object that signals when the job is completed.
      */
-    Semaphore submit(bool signal);
+    Semaphore submit(bool signal, const std::vector<VkSemaphore>& waitSemaphores = {});
 
     // TODO
     Job& submit();

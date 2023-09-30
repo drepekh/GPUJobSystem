@@ -32,13 +32,15 @@ class Resource
 {
     ResourceType resourceType;
     size_t size;
+    AllocatedMemory allocatedMemory;
     size_t ID;
 
 protected:
     Resource() = delete;
-    Resource(ResourceType resourceType, size_t size) :
+    Resource(ResourceType resourceType, size_t size, const AllocatedMemory& allocatedMemory) :
         resourceType(resourceType),
-        size(size)
+        size(size),
+        allocatedMemory(allocatedMemory)
     {
         static size_t nextID = 1;
         ID = nextID++;
@@ -53,6 +55,21 @@ public:
     size_t getSize() const
     {
         return size;
+    }
+
+    const AllocatedMemory& GetAllocatedMemory() const
+    {
+        return allocatedMemory;
+    }
+
+    VkDeviceMemory getMemory() const
+    {
+        return allocatedMemory.memory;
+    }
+
+    VkDeviceSize getMemoryOffset() const
+    {
+        return allocatedMemory.offset;
     }
 
     size_t getID() const
@@ -73,24 +90,21 @@ public:
 
 private:
     VkBuffer buffer;
-    AllocatedMemory allocatedMemory;
     Type bufferType;
 
     std::shared_ptr<Buffer> stagingBuffer;
 
 public:
     Buffer() :
-        Resource(ResourceType::StorageBuffer, 0),
+        Resource(ResourceType::StorageBuffer, 0, {}),
         buffer(VK_NULL_HANDLE),
-        allocatedMemory(),
         bufferType(Type::DeviceLocal),
         stagingBuffer(nullptr)
     {}
 
     Buffer(VkBuffer buffer, const AllocatedMemory& allocatedMemory, size_t size, Type type = Type::DeviceLocal, Buffer *staging = nullptr) :
-        Resource(ResourceType::StorageBuffer, size),
+        Resource(ResourceType::StorageBuffer, size, allocatedMemory),
         buffer(buffer),
-        allocatedMemory(allocatedMemory),
         bufferType(type),
         stagingBuffer(staging)
     {}
@@ -98,16 +112,6 @@ public:
     VkBuffer getBuffer() const
     {
         return buffer;
-    }
-
-    VkDeviceMemory getMemory() const
-    {
-        return allocatedMemory.memory;
-    }
-
-    VkDeviceSize getMemoryOffset() const
-    {
-        return allocatedMemory.offset;
     }
 
     Buffer* getStagingBuffer() const
@@ -125,7 +129,6 @@ public:
 class Image : public Resource
 {
     VkImage image;
-    AllocatedMemory allocatedMemory;
     VkImageView imageView;
     size_t width;
     size_t height;
@@ -136,9 +139,8 @@ class Image : public Resource
     
 public:
     Image() :
-        Resource(ResourceType::StorageImage, 0),
+        Resource(ResourceType::StorageImage, 0, {}),
         image(VK_NULL_HANDLE),
-        allocatedMemory(),
         imageView(VK_NULL_HANDLE),
         width(0),
         height(0),
@@ -149,9 +151,8 @@ public:
 
     Image(VkImage image, const AllocatedMemory& allocatedMemory, VkImageView imageView, size_t width, size_t height,
             size_t channels, Buffer *staging = nullptr, VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED) :
-        Resource(ResourceType::StorageImage, width * height * channels),
+        Resource(ResourceType::StorageImage, width * height * channels, allocatedMemory),
         image(image),
-        allocatedMemory(allocatedMemory),
         imageView(imageView),
         width(width),
         height(height),
@@ -168,16 +169,6 @@ public:
     VkImageView getView() const
     {
         return imageView;
-    }
-
-    VkDeviceMemory getMemory() const
-    {
-        return allocatedMemory.memory;
-    }
-
-    VkDeviceSize getMemoryOffset() const
-    {
-        return allocatedMemory.offset;
     }
 
     size_t getWidth() const

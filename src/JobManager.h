@@ -116,10 +116,10 @@ private:
         size_t pushConstantSize = 0;
     };
 
-    VkInstance instance;
+    VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger;
-    VkPhysicalDevice physicalDevice;
-    VkDevice device;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
     VkQueue computeQueue;
     VkCommandPool commandPool;
     VkDescriptorPool descriptorPool;
@@ -134,11 +134,12 @@ private:
     DeviceMemoryAllocator* allocator = nullptr;
     // allocated resources
     std::vector<VkBuffer> buffers;
-    std::vector<class AllocatedMemory> allocatedMemory;
+    std::vector<struct AllocatedMemory> allocatedMemory;
     std::vector<VkImage> images;
     std::vector<VkImageView> imageViews;
 
     std::vector<VkFence> fences;
+    std::vector<VkSemaphore> semaphores;
 
     DeviceComputeLimits computeLimits;
 
@@ -353,8 +354,8 @@ private:
     void copyBufferToBuffer(VkCommandBuffer commandBuffer, VkBuffer src, VkBuffer dst, size_t size,
         size_t srcOffset = 0, size_t dstOffset = 0);
 
-    void copyDataToHostVisibleMemory(const void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset);
-    void copyDataFromHostVisibleMemory(void *data, size_t size, VkDeviceMemory memory, VkDeviceSize memoryOffset);
+    void copyDataToHostVisibleMemory(const void *data, size_t size, const AllocatedMemory& memory);
+    void copyDataFromHostVisibleMemory(void *data, size_t size, const AllocatedMemory& memory);
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties = 0);
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);

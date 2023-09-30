@@ -5,18 +5,20 @@
 #include <vk_mem_alloc.h>
 
 
-void DefaultDeviceMemoryAllocator::initialize(JobManager* manager, VkPhysicalDevice physicalDevice, VkDevice device, VkInstance)
+VkResult SimpleDeviceMemoryAllocator::initialize(JobManager* manager, VkPhysicalDevice physicalDevice, VkDevice device, VkInstance)
 {
     this->manager = manager;
     this->device = device;
     this->physicalDevice = physicalDevice;
+
+    return VK_SUCCESS;
 }
 
-void DefaultDeviceMemoryAllocator::deinitialize()
+void SimpleDeviceMemoryAllocator::deinitialize()
 {
 }
 
-AllocatedMemory DefaultDeviceMemoryAllocator::createBuffer(VkBuffer& buffer, const VkBufferCreateInfo& createInfo, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
+AllocatedMemory SimpleDeviceMemoryAllocator::createBuffer(VkBuffer& buffer, const VkBufferCreateInfo& createInfo, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
 {
     if (vkCreateBuffer(device, &createInfo, nullptr, &buffer) != VK_SUCCESS)
     {
@@ -42,7 +44,7 @@ AllocatedMemory DefaultDeviceMemoryAllocator::createBuffer(VkBuffer& buffer, con
     return allocatedMemory;
 }
 
-AllocatedMemory DefaultDeviceMemoryAllocator::createImage(VkImage& image, const VkImageCreateInfo& createInfo, VkMemoryPropertyFlags properties)
+AllocatedMemory SimpleDeviceMemoryAllocator::createImage(VkImage& image, const VkImageCreateInfo& createInfo, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
 {
     if (vkCreateImage(device, &createInfo, nullptr, &image) != VK_SUCCESS)
     {
@@ -55,7 +57,7 @@ AllocatedMemory DefaultDeviceMemoryAllocator::createImage(VkImage& image, const 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, optionalProperties);
 
     AllocatedMemory allocatedMemory{};
     if (vkAllocateMemory(device, &allocInfo, nullptr, &allocatedMemory.memory) != VK_SUCCESS)
@@ -68,12 +70,22 @@ AllocatedMemory DefaultDeviceMemoryAllocator::createImage(VkImage& image, const 
     return allocatedMemory;
 }
 
-void DefaultDeviceMemoryAllocator::FreeMemory(const AllocatedMemory& allocatedMemory)
+void SimpleDeviceMemoryAllocator::freeMemory(const AllocatedMemory& allocatedMemory)
 {
     vkFreeMemory(device, allocatedMemory.memory, nullptr);
 }
 
-uint32_t DefaultDeviceMemoryAllocator::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
+VkResult SimpleDeviceMemoryAllocator::mapMemory(const AllocatedMemory& allocatedMemory, VkDeviceSize size, void **ppData)
+{
+    return vkMapMemory(device, allocatedMemory.memory, allocatedMemory.offset, size, 0, ppData);
+}
+
+void SimpleDeviceMemoryAllocator::unmapMemory(const AllocatedMemory& allocatedMemory)
+{
+    vkUnmapMemory(device, allocatedMemory.memory);
+}
+
+uint32_t SimpleDeviceMemoryAllocator::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
 {
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -100,7 +112,7 @@ uint32_t DefaultDeviceMemoryAllocator::findMemoryType(uint32_t typeFilter, VkMem
 
 // ----- VMA -----
 
-void VMADeviceMemoryAllocator::initialize(JobManager* manager, VkPhysicalDevice physicalDevice, VkDevice device, VkInstance instance)
+VkResult VMADeviceMemoryAllocator::initialize(JobManager* manager, VkPhysicalDevice physicalDevice, VkDevice device, VkInstance instance)
 {
     VmaAllocatorCreateInfo allocatorCreateInfo = {};
     allocatorCreateInfo.vulkanApiVersion = VK_API_VERSION_1_1;
@@ -108,7 +120,7 @@ void VMADeviceMemoryAllocator::initialize(JobManager* manager, VkPhysicalDevice 
     allocatorCreateInfo.device = device;
     allocatorCreateInfo.instance = instance;
 
-    vmaCreateAllocator(&allocatorCreateInfo, &allocator);
+    return vmaCreateAllocator(&allocatorCreateInfo, &allocator);
 }
 
 void VMADeviceMemoryAllocator::deinitialize()
@@ -134,10 +146,11 @@ AllocatedMemory VMADeviceMemoryAllocator::createBuffer(VkBuffer& buffer, const V
     return allocatedMemory;
 }
 
-AllocatedMemory VMADeviceMemoryAllocator::createImage(VkImage& image, const VkImageCreateInfo& createInfo, VkMemoryPropertyFlags properties)
+AllocatedMemory VMADeviceMemoryAllocator::createImage(VkImage& image, const VkImageCreateInfo& createInfo, VkMemoryPropertyFlags properties, VkMemoryPropertyFlags optionalProperties)
 {
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.requiredFlags = properties;
+    allocInfo.preferredFlags = optionalProperties;
 
     VmaAllocation allocation;
     VmaAllocationInfo allocationInfo;
@@ -151,9 +164,26 @@ AllocatedMemory VMADeviceMemoryAllocator::createImage(VkImage& image, const VkIm
     return allocatedMemory;
 }
 
-void VMADeviceMemoryAllocator::FreeMemory(const AllocatedMemory& allocatedMemory)
+void VMADeviceMemoryAllocator::freeMemory(const AllocatedMemory& allocatedMemory)
 {
-    VMACustomData* customData = static_cast<VMACustomData*>(allocatedMemory.customData);
+    VMACustomData* customData = getCustomData(allocatedMemory);
     vmaFreeMemory(allocator, customData->allocation);
     delete customData;
+}
+
+VkResult VMADeviceMemoryAllocator::mapMemory(const AllocatedMemory& allocatedMemory, VkDeviceSize size, void **ppData)
+{
+    VMACustomData* customData = getCustomData(allocatedMemory);
+    return vmaMapMemory(allocator, customData->allocation, ppData);
+}
+
+void VMADeviceMemoryAllocator::unmapMemory(const AllocatedMemory& allocatedMemory)
+{
+    VMACustomData* customData = getCustomData(allocatedMemory);
+    vmaUnmapMemory(allocator, customData->allocation);
+}
+
+VMACustomData* VMADeviceMemoryAllocator::getCustomData(const AllocatedMemory& allocatedMemory)
+{
+    return static_cast<VMACustomData*>(allocatedMemory.customData);;
 }

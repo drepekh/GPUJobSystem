@@ -238,7 +238,7 @@ Job& Job::waitBeforeTransfers()
     return *this;
 }
 
-void Job::addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
+Job& Job::addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcAccessMask,
     VkPipelineStageFlags dstStageMask, VkAccessFlags dstAccessMask)
 {
     VkMemoryBarrier barrier{};
@@ -254,9 +254,25 @@ void Job::addMemoryBarrier(VkPipelineStageFlags srcStageMask, VkAccessFlags srcA
         1, &barrier,
         0, nullptr,
         0, nullptr);
+    
+    return *this;
 }
 
-Semaphore Job::submit(bool signal)
+Job& Job::addExecutionBarrier(VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask)
+{
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        0, nullptr,
+        0, nullptr);
+
+    return *this;
+}
+
+Semaphore Job::submit(bool signal, const std::vector<VkSemaphore>& waitSemaphores)
 {
     if (!isRecorded)
     {
@@ -288,6 +304,12 @@ Semaphore Job::submit(bool signal)
 
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &signalSemaphore;
+    }
+
+    if (waitSemaphores.size() != 0)
+    {
+        submitInfo.waitSemaphoreCount = static_cast<uint32_t>(waitSemaphores.size());
+        submitInfo.pWaitSemaphores = waitSemaphores.data();
     }
 
     vkResetFences(manager->device, 1, &fence);
@@ -343,7 +365,7 @@ void Job::completePostExecutionTransfers()
         const auto& transferInfo = postExecutionTransfers[i];
 
         if (transferInfo.hostBuffer != nullptr)
-            manager->copyDataFromHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory(), transferInfo.deviceBuffer->getMemoryOffset());
+            manager->copyDataFromHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->GetAllocatedMemory());
 
         if (transferInfo.destroyAfterTransfer)
         {
@@ -364,7 +386,7 @@ void Job::completePreExecutionTransfers()
         const auto& transferInfo = preExecutionTransfers[i];
 
         if (transferInfo.hostBuffer != nullptr)
-            manager->copyDataToHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->getMemory(), transferInfo.deviceBuffer->getMemoryOffset());
+            manager->copyDataToHostVisibleMemory(transferInfo.hostBuffer, transferInfo.size, transferInfo.deviceBuffer->GetAllocatedMemory());
 
         if (transferInfo.destroyAfterTransfer)
         {
