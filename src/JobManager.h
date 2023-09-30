@@ -49,7 +49,7 @@ template<typename T1, typename T2, typename... Args>
 void copyArgs(char *buffer, VkSpecializationMapEntry *entry, size_t offset, uint32_t id, const T1& t1, T2&& t2, Args&&... args)
 {
     entry->constantID = id;
-    entry->offset = offset;
+    entry->offset = static_cast<uint32_t>(offset);
     entry->size = sizeof(T1);
     memcpy(buffer, &t1, sizeof(T1));
     copyArgs<T2, Args...>(buffer + sizeof(T1), entry + 1, offset + sizeof(T1), id + 1, std::forward<T2>(t2), std::forward<Args>(args)...);
